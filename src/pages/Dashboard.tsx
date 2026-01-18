@@ -1,0 +1,290 @@
+import { useEffect, useState } from 'react';
+import { AppLayout } from '@/components/layout/AppLayout';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { useNavigate } from 'react-router-dom';
+import { supabase } from '@/integrations/supabase/client';
+import { useAuth } from '@/contexts/AuthContext';
+import { Phone, Calendar, FileText, TrendingUp, Clock, Mic, ArrowLeft } from 'lucide-react';
+import { format } from 'date-fns';
+import { he } from 'date-fns/locale';
+
+interface DashboardStats {
+  totalCalls: number;
+  todayCalls: number;
+  upcomingAppointments: number;
+  activeScripts: number;
+}
+
+interface RecentCall {
+  id: string;
+  caller_name: string | null;
+  created_at: string;
+  call_type: string;
+  summary: string | null;
+}
+
+interface UpcomingAppointment {
+  id: string;
+  customer_name: string;
+  title: string;
+  start_time: string;
+}
+
+export default function Dashboard() {
+  const { user } = useAuth();
+  const navigate = useNavigate();
+  const [stats, setStats] = useState<DashboardStats>({
+    totalCalls: 0,
+    todayCalls: 0,
+    upcomingAppointments: 0,
+    activeScripts: 0,
+  });
+  const [recentCalls, setRecentCalls] = useState<RecentCall[]>([]);
+  const [upcomingAppointments, setUpcomingAppointments] = useState<UpcomingAppointment[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (user) {
+      fetchDashboardData();
+    }
+  }, [user]);
+
+  const fetchDashboardData = async () => {
+    try {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+
+      // Fetch calls count
+      const { count: totalCalls } = await supabase
+        .from('calls')
+        .select('*', { count: 'exact', head: true });
+
+      const { count: todayCalls } = await supabase
+        .from('calls')
+        .select('*', { count: 'exact', head: true })
+        .gte('created_at', today.toISOString());
+
+      // Fetch upcoming appointments
+      const { data: appointments, count: appointmentsCount } = await supabase
+        .from('appointments')
+        .select('*', { count: 'exact' })
+        .gte('start_time', new Date().toISOString())
+        .order('start_time', { ascending: true })
+        .limit(5);
+
+      // Fetch active scripts count
+      const { count: scriptsCount } = await supabase
+        .from('scripts')
+        .select('*', { count: 'exact', head: true })
+        .eq('is_active', true);
+
+      // Fetch recent calls
+      const { data: calls } = await supabase
+        .from('calls')
+        .select('id, caller_name, created_at, call_type, summary')
+        .order('created_at', { ascending: false })
+        .limit(5);
+
+      setStats({
+        totalCalls: totalCalls || 0,
+        todayCalls: todayCalls || 0,
+        upcomingAppointments: appointmentsCount || 0,
+        activeScripts: scriptsCount || 0,
+      });
+
+      setRecentCalls(calls || []);
+      setUpcomingAppointments(appointments || []);
+    } catch (error) {
+      console.error('Error fetching dashboard data:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const statCards = [
+    {
+      title: 'סה"כ שיחות',
+      value: stats.totalCalls,
+      icon: Phone,
+      color: 'bg-primary/10 text-primary',
+      description: 'כל השיחות',
+    },
+    {
+      title: 'שיחות היום',
+      value: stats.todayCalls,
+      icon: TrendingUp,
+      color: 'bg-green-500/10 text-green-600',
+      description: 'מאז חצות',
+    },
+    {
+      title: 'פגישות קרובות',
+      value: stats.upcomingAppointments,
+      icon: Calendar,
+      color: 'bg-orange-500/10 text-orange-600',
+      description: 'בהמתנה',
+    },
+    {
+      title: 'תסריטים פעילים',
+      value: stats.activeScripts,
+      icon: FileText,
+      color: 'bg-purple-500/10 text-purple-600',
+      description: 'פועלים כעת',
+    },
+  ];
+
+  return (
+    <AppLayout>
+      <div className="space-y-6">
+        {/* Header */}
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div>
+            <h1 className="text-2xl lg:text-3xl font-bold">שלום! 👋</h1>
+            <p className="text-muted-foreground">הנה סיכום הפעילות שלך</p>
+          </div>
+          <Button
+            onClick={() => navigate('/agent')}
+            className="gradient-primary text-white shadow-lg shadow-primary/25"
+          >
+            <Mic className="ml-2 h-4 w-4" />
+            התחל שיחה עם הסוכן
+          </Button>
+        </div>
+
+        {/* Stats Grid */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          {statCards.map((stat) => (
+            <Card key={stat.title} className="border-0 shadow-sm hover:shadow-md transition-shadow">
+              <CardContent className="p-4 lg:p-6">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <p className="text-sm text-muted-foreground">{stat.title}</p>
+                    <p className="text-2xl lg:text-3xl font-bold mt-1">{stat.value}</p>
+                    <p className="text-xs text-muted-foreground mt-1">{stat.description}</p>
+                  </div>
+                  <div className={`p-2 lg:p-3 rounded-xl ${stat.color}`}>
+                    <stat.icon className="h-5 w-5 lg:h-6 lg:w-6" />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+
+        {/* Recent Activity */}
+        <div className="grid lg:grid-cols-2 gap-6">
+          {/* Recent Calls */}
+          <Card className="border-0 shadow-sm">
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <div>
+                <CardTitle className="text-lg">שיחות אחרונות</CardTitle>
+                <CardDescription>5 השיחות האחרונות</CardDescription>
+              </div>
+              <Button variant="ghost" size="sm" onClick={() => navigate('/calls')}>
+                הכל
+                <ArrowLeft className="mr-1 h-4 w-4" />
+              </Button>
+            </CardHeader>
+            <CardContent>
+              {recentCalls.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  <Phone className="h-12 w-12 mx-auto mb-2 opacity-20" />
+                  <p>אין שיחות עדיין</p>
+                  <Button
+                    variant="link"
+                    onClick={() => navigate('/agent')}
+                    className="mt-2"
+                  >
+                    התחל שיחה ראשונה
+                  </Button>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {recentCalls.map((call) => (
+                    <div
+                      key={call.id}
+                      className="flex items-center gap-3 p-3 rounded-lg bg-secondary/50 hover:bg-secondary transition-colors cursor-pointer"
+                      onClick={() => navigate('/calls')}
+                    >
+                      <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center">
+                        <Phone className="h-4 w-4 text-primary" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="font-medium truncate">
+                          {call.caller_name || 'לקוח אנונימי'}
+                        </p>
+                        <p className="text-sm text-muted-foreground truncate">
+                          {call.summary || 'אין סיכום'}
+                        </p>
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        {format(new Date(call.created_at), 'HH:mm', { locale: he })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Upcoming Appointments */}
+          <Card className="border-0 shadow-sm">
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <div>
+                <CardTitle className="text-lg">פגישות קרובות</CardTitle>
+                <CardDescription>הפגישות הבאות שלך</CardDescription>
+              </div>
+              <Button variant="ghost" size="sm" onClick={() => navigate('/calendar')}>
+                הכל
+                <ArrowLeft className="mr-1 h-4 w-4" />
+              </Button>
+            </CardHeader>
+            <CardContent>
+              {upcomingAppointments.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  <Calendar className="h-12 w-12 mx-auto mb-2 opacity-20" />
+                  <p>אין פגישות קרובות</p>
+                  <Button
+                    variant="link"
+                    onClick={() => navigate('/calendar')}
+                    className="mt-2"
+                  >
+                    הוסף פגישה
+                  </Button>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {upcomingAppointments.map((apt) => (
+                    <div
+                      key={apt.id}
+                      className="flex items-center gap-3 p-3 rounded-lg bg-secondary/50 hover:bg-secondary transition-colors cursor-pointer"
+                      onClick={() => navigate('/calendar')}
+                    >
+                      <div className="h-10 w-10 rounded-full bg-orange-500/10 flex items-center justify-center">
+                        <Clock className="h-4 w-4 text-orange-600" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="font-medium truncate">{apt.title}</p>
+                        <p className="text-sm text-muted-foreground truncate">
+                          {apt.customer_name}
+                        </p>
+                      </div>
+                      <div className="text-left">
+                        <p className="text-sm font-medium">
+                          {format(new Date(apt.start_time), 'HH:mm', { locale: he })}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          {format(new Date(apt.start_time), 'dd/MM', { locale: he })}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    </AppLayout>
+  );
+}
