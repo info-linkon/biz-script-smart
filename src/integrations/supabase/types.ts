@@ -152,7 +152,11 @@ export type Database = {
           business_type: string | null
           created_at: string
           id: string
+          is_admin: boolean | null
           phone: string | null
+          subscription_plan_id: string | null
+          subscription_started_at: string | null
+          subscription_status: string | null
           updated_at: string
           user_id: string
         }
@@ -162,7 +166,11 @@ export type Database = {
           business_type?: string | null
           created_at?: string
           id?: string
+          is_admin?: boolean | null
           phone?: string | null
+          subscription_plan_id?: string | null
+          subscription_started_at?: string | null
+          subscription_status?: string | null
           updated_at?: string
           user_id: string
         }
@@ -172,11 +180,23 @@ export type Database = {
           business_type?: string | null
           created_at?: string
           id?: string
+          is_admin?: boolean | null
           phone?: string | null
+          subscription_plan_id?: string | null
+          subscription_started_at?: string | null
+          subscription_status?: string | null
           updated_at?: string
           user_id?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "profiles_subscription_plan_id_fkey"
+            columns: ["subscription_plan_id"]
+            isOneToOne: false
+            referencedRelation: "subscription_plans"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       scripts: {
         Row: {
@@ -215,6 +235,75 @@ export type Database = {
           name?: string
           services?: string[] | null
           tone?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      subscription_plans: {
+        Row: {
+          created_at: string
+          has_ai_agent: boolean
+          has_analytics: boolean
+          id: string
+          is_active: boolean
+          max_appointments_per_month: number
+          max_calls_per_month: number
+          max_scripts: number
+          name: string
+          name_he: string
+          price_monthly: number
+        }
+        Insert: {
+          created_at?: string
+          has_ai_agent?: boolean
+          has_analytics?: boolean
+          id?: string
+          is_active?: boolean
+          max_appointments_per_month?: number
+          max_calls_per_month?: number
+          max_scripts?: number
+          name: string
+          name_he: string
+          price_monthly?: number
+        }
+        Update: {
+          created_at?: string
+          has_ai_agent?: boolean
+          has_analytics?: boolean
+          id?: string
+          is_active?: boolean
+          max_appointments_per_month?: number
+          max_calls_per_month?: number
+          max_scripts?: number
+          name?: string
+          name_he?: string
+          price_monthly?: number
+        }
+        Relationships: []
+      }
+      usage_stats: {
+        Row: {
+          appointments_count: number
+          calls_count: number
+          id: string
+          month_year: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          appointments_count?: number
+          calls_count?: number
+          id?: string
+          month_year: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          appointments_count?: number
+          calls_count?: number
+          id?: string
+          month_year?: string
           updated_at?: string
           user_id?: string
         }
