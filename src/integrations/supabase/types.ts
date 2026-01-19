@@ -145,6 +145,48 @@ export type Database = {
           },
         ]
       }
+      phone_numbers: {
+        Row: {
+          country_code: string
+          created_at: string | null
+          elevenlabs_phone_id: string
+          id: string
+          is_active: boolean | null
+          monthly_cost: number | null
+          phone_number: string
+          purchased_at: string | null
+          status: string
+          updated_at: string | null
+          user_id: string
+        }
+        Insert: {
+          country_code?: string
+          created_at?: string | null
+          elevenlabs_phone_id: string
+          id?: string
+          is_active?: boolean | null
+          monthly_cost?: number | null
+          phone_number: string
+          purchased_at?: string | null
+          status?: string
+          updated_at?: string | null
+          user_id: string
+        }
+        Update: {
+          country_code?: string
+          created_at?: string | null
+          elevenlabs_phone_id?: string
+          id?: string
+          is_active?: boolean | null
+          monthly_cost?: number | null
+          phone_number?: string
+          purchased_at?: string | null
+          status?: string
+          updated_at?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
       profiles: {
         Row: {
           address: string | null
@@ -202,7 +244,9 @@ export type Database = {
         Row: {
           business_hours: string | null
           created_at: string
+          custom_prompt: string | null
           faq: Json | null
+          greeting_message: string | null
           id: string
           is_active: boolean | null
           language: string | null
@@ -211,11 +255,14 @@ export type Database = {
           tone: string | null
           updated_at: string
           user_id: string
+          voice_id: string | null
         }
         Insert: {
           business_hours?: string | null
           created_at?: string
+          custom_prompt?: string | null
           faq?: Json | null
+          greeting_message?: string | null
           id?: string
           is_active?: boolean | null
           language?: string | null
@@ -224,11 +271,14 @@ export type Database = {
           tone?: string | null
           updated_at?: string
           user_id: string
+          voice_id?: string | null
         }
         Update: {
           business_hours?: string | null
           created_at?: string
+          custom_prompt?: string | null
           faq?: Json | null
+          greeting_message?: string | null
           id?: string
           is_active?: boolean | null
           language?: string | null
@@ -237,6 +287,7 @@ export type Database = {
           tone?: string | null
           updated_at?: string
           user_id?: string
+          voice_id?: string | null
         }
         Relationships: []
       }
