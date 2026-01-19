@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -8,7 +8,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 import { User, Building2, Phone, MapPin, Loader2, Save } from 'lucide-react';
-import { useEffect } from 'react';
+import { PhoneNumberManager } from '@/components/phone/PhoneNumberManager';
 
 interface Profile {
   business_name: string | null;
@@ -183,6 +183,9 @@ export default function Settings() {
             )}
           </CardContent>
         </Card>
+
+        {/* Phone Number Management */}
+        <PhoneNumberManager />
 
         {/* Account Info */}
         <Card className="border-0 shadow-sm">

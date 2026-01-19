@@ -28,6 +28,9 @@ interface Script {
   language: string;
   is_active: boolean;
   created_at: string;
+  custom_prompt: string | null;
+  greeting_message: string | null;
+  voice_id: string | null;
 }
 
 export default function Scripts() {
@@ -45,6 +48,8 @@ export default function Scripts() {
   const [faq, setFaq] = useState<FAQ[]>([{ question: '', answer: '' }]);
   const [tone, setTone] = useState('friendly');
   const [language, setLanguage] = useState('he');
+  const [customPrompt, setCustomPrompt] = useState('');
+  const [greetingMessage, setGreetingMessage] = useState('');
 
   useEffect(() => {
     if (user) {
@@ -64,7 +69,10 @@ export default function Scripts() {
       // Transform the data to match our interface
       const transformedData = (data || []).map(script => ({
         ...script,
-        faq: Array.isArray(script.faq) ? (script.faq as unknown as FAQ[]) : []
+        faq: Array.isArray(script.faq) ? (script.faq as unknown as FAQ[]) : [],
+        custom_prompt: script.custom_prompt || null,
+        greeting_message: script.greeting_message || null,
+        voice_id: script.voice_id || null,
       }));
       
       setScripts(transformedData);
@@ -83,6 +91,8 @@ export default function Scripts() {
     setFaq([{ question: '', answer: '' }]);
     setTone('friendly');
     setLanguage('he');
+    setCustomPrompt('');
+    setGreetingMessage('');
     setEditingScript(null);
   };
 
@@ -94,6 +104,8 @@ export default function Scripts() {
     setFaq(script.faq.length > 0 ? script.faq : [{ question: '', answer: '' }]);
     setTone(script.tone);
     setLanguage(script.language);
+    setCustomPrompt(script.custom_prompt || '');
+    setGreetingMessage(script.greeting_message || '');
     setDialogOpen(true);
   };
 
@@ -115,6 +127,8 @@ export default function Scripts() {
         faq: faqData as unknown as null,
         tone,
         language,
+        custom_prompt: customPrompt.trim() || null,
+        greeting_message: greetingMessage.trim() || null,
       };
 
       if (editingScript) {
@@ -282,6 +296,28 @@ export default function Scripts() {
                       </SelectContent>
                     </Select>
                   </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="greetingMessage">הודעת פתיחה</Label>
+                  <Textarea
+                    id="greetingMessage"
+                    placeholder="שלום! הגעתם לעסק שלנו. איך אוכל לעזור?"
+                    value={greetingMessage}
+                    onChange={(e) => setGreetingMessage(e.target.value)}
+                    rows={2}
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="customPrompt">הנחיות מותאמות לסוכן</Label>
+                  <Textarea
+                    id="customPrompt"
+                    placeholder="הוסף הנחיות מיוחדות לסוכן, למשל: תמיד הצע הנחה לקולות חוזרים"
+                    value={customPrompt}
+                    onChange={(e) => setCustomPrompt(e.target.value)}
+                    rows={3}
+                  />
                 </div>
 
                 <div className="space-y-3">

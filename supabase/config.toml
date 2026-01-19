@@ -1,1 +1,13 @@
 project_id = "aibwnlcsbwhprbnavpgo"
+
+[functions.elevenlabs-get-available-numbers]
+verify_jwt = true
+
+[functions.elevenlabs-purchase-number]
+verify_jwt = true
+
+[functions.elevenlabs-webhook]
+verify_jwt = false
+
+[functions.elevenlabs-schedule-appointment]
+verify_jwt = false
