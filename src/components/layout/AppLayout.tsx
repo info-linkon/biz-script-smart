@@ -1,6 +1,7 @@
 import { ReactNode, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
+import { useUserRole } from '@/hooks/useUserRole';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import {
@@ -14,7 +15,8 @@ import {
   LogOut,
   Menu,
   X,
-  User
+  User,
+  Shield
 } from 'lucide-react';
 
 interface AppLayoutProps {
@@ -32,6 +34,7 @@ const navItems = [
 
 export function AppLayout({ children }: AppLayoutProps) {
   const { user, signOut } = useAuth();
+  const { isAdmin } = useUserRole();
   const location = useLocation();
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -100,6 +103,23 @@ export function AppLayout({ children }: AppLayoutProps) {
               </Link>
             );
           })}
+          
+          {/* Admin Link - Only visible to admins */}
+          {isAdmin && (
+            <Link
+              to="/admin"
+              onClick={() => setSidebarOpen(false)}
+              className={cn(
+                "flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200",
+                location.pathname === '/admin'
+                  ? "bg-destructive text-destructive-foreground shadow-lg shadow-destructive/25"
+                  : "hover:bg-destructive/10 text-destructive hover:text-destructive"
+              )}
+            >
+              <Shield className="h-5 w-5" />
+              <span className="font-medium">ניהול מערכת</span>
+            </Link>
+          )}
         </nav>
 
         {/* User Section */}
