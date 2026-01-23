@@ -98,7 +98,50 @@ serve(async (req) => {
         agent: {
           prompt: {
             prompt: systemPrompt,
-            tools: []
+            tools: [
+              {
+                type: "webhook",
+                name: "schedule_appointment",
+                description: "Schedule an appointment for the caller. Use this when the customer wants to book an appointment.",
+                api_schema: {
+                  url: `${SUPABASE_URL}/functions/v1/elevenlabs-schedule-appointment`,
+                  method: "POST",
+                  request_body_schema: {
+                    type: "object",
+                    properties: {
+                      customer_name: {
+                        type: "string",
+                        description: "The name of the customer"
+                      },
+                      customer_phone: {
+                        type: "string",
+                        description: "The phone number of the customer"
+                      },
+                      date: {
+                        type: "string",
+                        description: "The date of the appointment in YYYY-MM-DD format"
+                      },
+                      time: {
+                        type: "string",
+                        description: "The time of the appointment in HH:MM format"
+                      },
+                      service: {
+                        type: "string",
+                        description: "The type of service or reason for the appointment"
+                      }
+                    },
+                    required: ["customer_name", "date", "time"]
+                  },
+                  request_headers: [
+                    {
+                      type: "value",
+                      name: "Content-Type",
+                      value: "application/json"
+                    }
+                  ]
+                }
+              }
+            ]
           },
           first_message: finalGreeting,
           language: script?.language || "he",
