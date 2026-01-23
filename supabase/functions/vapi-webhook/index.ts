@@ -154,7 +154,7 @@ async function handleAssistantRequest(supabase: any, callData: any, supabaseUrl:
         transcriber: {
           provider: "deepgram",
           model: "nova-2",
-          language: language === "he" ? "he" : language === "ar" ? "ar" : "en"
+          language: (language === "he" || language === "ar") ? "multi" : language
         },
         model: {
           provider: "openai",
@@ -201,7 +201,12 @@ async function handleAssistantRequest(supabase: any, callData: any, supabaseUrl:
         voice: {
           provider: "11labs",
           voiceId: script?.voice_id || "JBFqnCBsd6RMkjVDRZzb",
-          model: "eleven_turbo_v2_5"
+          model: "eleven_multilingual_v2",
+          stability: 0.6,
+          similarityBoost: 0.8,
+          style: 0.3,
+          useSpeakerBoost: true,
+          optimizeStreamingLatency: 2
         },
         silenceTimeoutSeconds: 30,
         maxDurationSeconds: 600
@@ -363,7 +368,9 @@ ${customPrompt ? `הנחיות נוספות:\n${customPrompt}` : ''}
 4. אם אינך יודע תשובה, הצע ללקוח להשאיר הודעה ונחזור אליו
 
 חשוב:
-- דבר תמיד בעברית
+- דבר תמיד בעברית באותיות עבריות בלבד
+- אסור לך בשום פנים לכתוב עברית באותיות לטיניות (כמו "Shalom" או "Mah nishma")
+- כל התשובות שלך חייבות להיות בכתב עברי בלבד: א-ת
 - היה אדיב ומקצועי
 - לפני קביעת פגישה, בדוק את הזמינות
 - מספר הטלפון של המתקשר: ${callerNumber}

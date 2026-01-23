@@ -6,8 +6,9 @@ import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { supabase } from '@/integrations/supabase/client';
-import { Loader2, Volume2, Play, Search, X } from 'lucide-react';
+import { Loader2, Volume2, Play, Search, X, Star } from 'lucide-react';
 import { toast } from 'sonner';
+import { Badge } from '@/components/ui/badge';
 
 interface Voice {
   voice_id: string;
@@ -17,6 +18,15 @@ interface Voice {
   labels?: Record<string, string>;
   description?: string;
 }
+
+// Voices that are recommended for Hebrew (tested for good pronunciation)
+const HEBREW_RECOMMENDED_VOICES = [
+  'JBFqnCBsd6RMkjVDRZzb', // George
+  'onwK4e9ZLuTAKqWW03F9', // Daniel
+  'TX3LPaxmHKxFdv7VOQHJ', // Liam
+  'pqHfZKP75CvOlQylNhV4', // Bill
+  'N2lVS1w4EtoT3dr4eOWO', // Callum
+];
 
 interface VoiceSelectorProps {
   selectedVoiceId: string | null;
@@ -305,12 +315,20 @@ export function VoiceSelector({ selectedVoiceId, onSelect, compact = false, curr
                     </div>
                   )}
                   <div>
-                    <Label 
-                      htmlFor={`voice-${voice.voice_id}`} 
-                      className={`cursor-pointer font-medium ${playingId === voice.voice_id ? 'animate-audio-pulse' : ''}`}
-                    >
-                      {voice.name}
-                    </Label>
+                    <div className="flex items-center gap-2">
+                      <Label 
+                        htmlFor={`voice-${voice.voice_id}`} 
+                        className={`cursor-pointer font-medium ${playingId === voice.voice_id ? 'animate-audio-pulse' : ''}`}
+                      >
+                        {voice.name}
+                      </Label>
+                      {language === 'he' && HEBREW_RECOMMENDED_VOICES.includes(voice.voice_id) && (
+                        <Badge variant="secondary" className="bg-accent text-accent-foreground text-xs gap-1">
+                          <Star className="h-3 w-3 fill-current" />
+                          מומלץ לעברית
+                        </Badge>
+                      )}
+                    </div>
                     {voice.description && (
                       <p className="text-sm text-muted-foreground">{voice.description}</p>
                     )}
