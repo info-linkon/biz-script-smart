@@ -5,10 +5,11 @@ import { Button } from '@/components/ui/button';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
-import { Phone, Calendar, FileText, TrendingUp, Clock, Mic, ArrowLeft, Languages } from 'lucide-react';
+import { Phone, Calendar, FileText, TrendingUp, Clock, Mic, ArrowLeft, Languages, Zap, Radio, Settings } from 'lucide-react';
 import { format } from 'date-fns';
 import { he } from 'date-fns/locale';
 import { OnboardingStatusCard } from '@/components/onboarding/OnboardingStatusCard';
+import { type VoiceProvider } from '@/lib/voice-provider';
 
 interface DashboardStats {
   totalCalls: number;
@@ -37,6 +38,12 @@ interface UpcomingAppointment {
   start_time: string;
 }
 
+interface AgentStatus {
+  hasAgent: boolean;
+  voiceProvider: VoiceProvider | null;
+  phoneNumber: string | null;
+}
+
 export default function Dashboard() {
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -49,13 +56,48 @@ export default function Dashboard() {
   });
   const [recentCalls, setRecentCalls] = useState<RecentCall[]>([]);
   const [upcomingAppointments, setUpcomingAppointments] = useState<UpcomingAppointment[]>([]);
+  const [agentStatus, setAgentStatus] = useState<AgentStatus>({
+    hasAgent: false,
+    voiceProvider: null,
+    phoneNumber: null,
+  });
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     if (user) {
       fetchDashboardData();
+      fetchAgentStatus();
     }
   }, [user]);
+
+  const fetchAgentStatus = async () => {
+    try {
+      // Fetch profile for provider info
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('voice_provider, elevenlabs_agent_id, vapi_assistant_id')
+        .eq('user_id', user!.id)
+        .maybeSingle();
+
+      // Fetch active phone number
+      const { data: phoneNumber } = await supabase
+        .from('phone_numbers')
+        .select('phone_number')
+        .eq('user_id', user!.id)
+        .eq('status', 'active')
+        .maybeSingle();
+
+      const hasAgent = !!(profile?.elevenlabs_agent_id || profile?.vapi_assistant_id);
+      
+      setAgentStatus({
+        hasAgent,
+        voiceProvider: (profile?.voice_provider as VoiceProvider) || null,
+        phoneNumber: phoneNumber?.phone_number || null,
+      });
+    } catch (error) {
+      console.error('Error fetching agent status:', error);
+    }
+  };
 
   const fetchDashboardData = async () => {
     try {
@@ -157,6 +199,27 @@ export default function Dashboard() {
 
   const hasLanguageData = stats.languageStats.he > 0 || stats.languageStats.ar > 0 || stats.languageStats.en > 0;
 
+  const getProviderInfo = (provider: VoiceProvider | null) => {
+    if (provider === 'vapi') {
+      return {
+        name: 'Vapi.ai',
+        icon: Radio,
+        gradient: 'from-blue-500 to-purple-600',
+        bgColor: 'bg-blue-500/10',
+        textColor: 'text-blue-600',
+        description: 'תמיכה מלאה בעברית וערבית',
+      };
+    }
+    return {
+      name: 'ElevenLabs',
+      icon: Zap,
+      gradient: 'from-yellow-400 to-orange-500',
+      bgColor: 'bg-orange-500/10',
+      textColor: 'text-orange-600',
+      description: 'קול טבעי ואיכותי',
+    };
+  };
+
   return (
     <AppLayout>
       <div className="space-y-6">
@@ -177,6 +240,69 @@ export default function Dashboard() {
             התחל שיחה עם הסוכן
           </Button>
         </div>
+
+        {/* Voice Provider Status Card */}
+        {agentStatus.hasAgent && (
+          <Card className="border-0 shadow-sm overflow-hidden">
+            <div className={`h-1 bg-gradient-to-r ${getProviderInfo(agentStatus.voiceProvider).gradient}`} />
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                  {/* Provider Icon */}
+                  <div className={`h-12 w-12 rounded-xl ${getProviderInfo(agentStatus.voiceProvider).bgColor} flex items-center justify-center`}>
+                    {agentStatus.voiceProvider === 'vapi' ? (
+                      <Radio className={`h-6 w-6 ${getProviderInfo(agentStatus.voiceProvider).textColor}`} />
+                    ) : (
+                      <Zap className={`h-6 w-6 ${getProviderInfo(agentStatus.voiceProvider).textColor}`} />
+                    )}
+                  </div>
+                  
+                  {/* Provider Info */}
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h3 className="font-semibold">ספק קול פעיל</h3>
+                      <span className={`text-sm font-medium px-2 py-0.5 rounded-full ${getProviderInfo(agentStatus.voiceProvider).bgColor} ${getProviderInfo(agentStatus.voiceProvider).textColor}`}>
+                        {getProviderInfo(agentStatus.voiceProvider).name}
+                      </span>
+                    </div>
+                    <p className="text-sm text-muted-foreground">
+                      {getProviderInfo(agentStatus.voiceProvider).description}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Phone Number & Settings */}
+                <div className="flex items-center gap-4">
+                  {agentStatus.phoneNumber && (
+                    <div className="text-left hidden sm:block">
+                      <p className="text-xs text-muted-foreground">מספר טלפון</p>
+                      <p className="font-mono font-medium" dir="ltr">{agentStatus.phoneNumber}</p>
+                    </div>
+                  )}
+                  <Button 
+                    variant="outline" 
+                    size="sm"
+                    onClick={() => navigate('/settings')}
+                    className="gap-2"
+                  >
+                    <Settings className="h-4 w-4" />
+                    <span className="hidden sm:inline">הגדרות</span>
+                  </Button>
+                </div>
+              </div>
+
+              {/* Mobile Phone Number */}
+              {agentStatus.phoneNumber && (
+                <div className="mt-3 pt-3 border-t sm:hidden">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-muted-foreground">מספר טלפון:</span>
+                    <span className="font-mono font-medium" dir="ltr">{agentStatus.phoneNumber}</span>
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
 
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           {statCards.map((stat) => (
