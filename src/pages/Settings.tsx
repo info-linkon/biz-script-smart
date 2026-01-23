@@ -7,7 +7,7 @@ import { Label } from '@/components/ui/label';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
-import { User, Building2, Phone, MapPin, Loader2, Save, Volume2, Play, Pause, Languages, Zap, Globe } from 'lucide-react';
+import { User, Building2, Phone, MapPin, Loader2, Save, Volume2, Play, Pause, Languages, Zap, Globe, RefreshCw } from 'lucide-react';
 import { PhoneNumberManager } from '@/components/phone/PhoneNumberManager';
 import { VoiceSelector } from '@/components/phone/VoiceSelector';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
@@ -45,6 +45,7 @@ export default function Settings() {
   const [savingProvider, setSavingProvider] = useState(false);
   const [playingPreview, setPlayingPreview] = useState(false);
   const [audioElement, setAudioElement] = useState<HTMLAudioElement | null>(null);
+  const [syncingAgent, setSyncingAgent] = useState(false);
 
   const LANGUAGES = [
     { code: 'he', name: 'עברית', flag: '🇮🇱' },
@@ -324,6 +325,61 @@ export default function Settings() {
       toast.error('שגיאה בעדכון הקול');
     } finally {
       setSavingVoice(false);
+    }
+  };
+
+  const handleSyncAgent = async () => {
+    if (!profile.vapi_assistant_id && !profile.elevenlabs_agent_id) {
+      toast.error('אין סוכן לסנכרון. יש להשלים את תהליך ה-Onboarding קודם.');
+      return;
+    }
+
+    setSyncingAgent(true);
+
+    try {
+      // Get user's active script
+      const { data: scripts, error: scriptError } = await supabase
+        .from('scripts')
+        .select('id, voice_id, language')
+        .eq('user_id', user!.id)
+        .eq('is_active', true)
+        .limit(1);
+
+      if (scriptError) throw scriptError;
+
+      const script = scripts?.[0];
+
+      if (!script) {
+        toast.error('לא נמצא תסריט פעיל. יש ליצור תסריט קודם.');
+        setSyncingAgent(false);
+        return;
+      }
+
+      // Determine which function to call based on provider
+      const updateFunction = profile.voice_provider === 'vapi' 
+        ? 'vapi-update-assistant' 
+        : 'elevenlabs-update-agent';
+
+      const { data, error } = await supabase.functions.invoke(updateFunction, {
+        body: { 
+          script_id: script.id,
+          voice_id: script.voice_id,
+          language: script.language
+        }
+      });
+
+      if (error) throw error;
+
+      if (data?.success) {
+        toast.success('הגדרות הסוכן סונכרנו בהצלחה! 🎉');
+      } else {
+        throw new Error(data?.error || 'Failed to sync agent');
+      }
+    } catch (error) {
+      console.error('Error syncing agent:', error);
+      toast.error('שגיאה בסנכרון הסוכן');
+    } finally {
+      setSyncingAgent(false);
     }
   };
 
@@ -663,6 +719,46 @@ export default function Settings() {
                   currentVoiceName={currentVoiceName}
                   language={selectedLanguage}
                 />
+              </CardContent>
+            </Card>
+
+            {/* Sync Agent Settings */}
+            <Card className="border-0 shadow-sm border-l-4 border-l-primary">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <RefreshCw className="h-5 w-5 text-primary" />
+                  סנכרון הגדרות סוכן
+                </CardTitle>
+                <CardDescription>
+                  עדכן את הסוכן עם כל ההגדרות האחרונות (שפה, קול, מודל TTS)
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-4">
+                  <p className="text-sm text-muted-foreground">
+                    אם הסוכן לא מדבר כראוי או אם ביצעת שינויים בהגדרות, לחץ על הכפתור למטה כדי לסנכרן את כל ההגדרות.
+                  </p>
+                  <Button 
+                    onClick={handleSyncAgent}
+                    disabled={syncingAgent}
+                    className="w-full gradient-primary text-white"
+                  >
+                    {syncingAgent ? (
+                      <>
+                        <Loader2 className="ml-2 h-4 w-4 animate-spin" />
+                        מסנכרן הגדרות...
+                      </>
+                    ) : (
+                      <>
+                        <RefreshCw className="ml-2 h-4 w-4" />
+                        סנכרן הגדרות סוכן
+                      </>
+                    )}
+                  </Button>
+                  <p className="text-xs text-muted-foreground">
+                    💡 <strong>טיפ:</strong> לחץ כאן אם הסוכן מדבר "עברית מקולקלת" או אם השפה לא נשמעת נכון
+                  </p>
+                </div>
               </CardContent>
             </Card>
           </>
