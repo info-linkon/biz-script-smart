@@ -7,14 +7,16 @@ import { Label } from '@/components/ui/label';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
-import { User, Building2, Phone, MapPin, Loader2, Save } from 'lucide-react';
+import { User, Building2, Phone, MapPin, Loader2, Save, Volume2 } from 'lucide-react';
 import { PhoneNumberManager } from '@/components/phone/PhoneNumberManager';
+import { VoiceSelector } from '@/components/phone/VoiceSelector';
 
 interface Profile {
   business_name: string | null;
   business_type: string | null;
   phone: string | null;
   address: string | null;
+  elevenlabs_agent_id: string | null;
 }
 
 export default function Settings() {
@@ -24,9 +26,12 @@ export default function Settings() {
     business_type: '',
     phone: '',
     address: '',
+    elevenlabs_agent_id: null,
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [selectedVoiceId, setSelectedVoiceId] = useState<string | null>(null);
+  const [savingVoice, setSavingVoice] = useState(false);
 
   useEffect(() => {
     if (user) {
@@ -50,6 +55,7 @@ export default function Settings() {
           business_type: data.business_type || '',
           phone: data.phone || '',
           address: data.address || '',
+          elevenlabs_agent_id: data.elevenlabs_agent_id || null,
         });
       }
     } catch (error) {
@@ -82,6 +88,56 @@ export default function Settings() {
       toast.error('שגיאה בשמירת ההגדרות');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleVoiceChange = async (voiceId: string) => {
+    setSelectedVoiceId(voiceId);
+    
+    if (!profile.elevenlabs_agent_id) {
+      toast.error('יש לרכוש מספר טלפון קודם כדי לשנות קול');
+      return;
+    }
+
+    setSavingVoice(true);
+
+    try {
+      // Get user's active script to update the agent
+      const { data: scripts } = await supabase
+        .from('scripts')
+        .select('id')
+        .eq('user_id', user!.id)
+        .eq('is_active', true)
+        .limit(1);
+
+      const scriptId = scripts?.[0]?.id;
+
+      if (!scriptId) {
+        toast.error('יש ליצור תסריט פעיל קודם');
+        setSavingVoice(false);
+        return;
+      }
+
+      // Call update agent with new voice
+      const { data, error } = await supabase.functions.invoke('elevenlabs-update-agent', {
+        body: { 
+          script_id: scriptId,
+          voice_id: voiceId 
+        }
+      });
+
+      if (error) throw error;
+
+      if (data?.success) {
+        toast.success('קול הסוכן עודכן בהצלחה');
+      } else {
+        throw new Error(data?.error || 'Failed to update voice');
+      }
+    } catch (error) {
+      console.error('Error updating voice:', error);
+      toast.error('שגיאה בעדכון הקול');
+    } finally {
+      setSavingVoice(false);
     }
   };
 
@@ -186,6 +242,33 @@ export default function Settings() {
 
         {/* Phone Number Management */}
         <PhoneNumberManager />
+
+        {/* Voice Settings */}
+        {profile.elevenlabs_agent_id && (
+          <Card className="border-0 shadow-sm">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Volume2 className="h-5 w-5 text-primary" />
+                קול הסוכן
+              </CardTitle>
+              <CardDescription>
+                בחר את הקול שבו הסוכן ידבר עם הלקוחות
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {savingVoice && (
+                <div className="flex items-center gap-2 mb-4 text-sm text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  מעדכן את הקול...
+                </div>
+              )}
+              <VoiceSelector 
+                selectedVoiceId={selectedVoiceId} 
+                onSelect={handleVoiceChange}
+              />
+            </CardContent>
+          </Card>
+        )}
 
         {/* Account Info */}
         <Card className="border-0 shadow-sm">
