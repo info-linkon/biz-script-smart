@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -6,6 +6,7 @@ import { Phone, ArrowRight, Loader2, Check, Sparkles, ShoppingCart, Mic, Radio }
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { Label } from '@/components/ui/label';
+import { useAuth } from '@/contexts/AuthContext';
 
 interface PhoneStepProps {
   onComplete: () => void;
@@ -45,14 +46,46 @@ const SETUP_STEPS = [
 ];
 
 export function PhoneStep({ onComplete, onBack }: PhoneStepProps) {
+  const { user } = useAuth();
   const [purchasing, setPurchasing] = useState(false);
   const [countryCode, setCountryCode] = useState('US');
   const [voiceProvider, setVoiceProvider] = useState<'elevenlabs' | 'vapi'>('elevenlabs');
+  const [providerLoaded, setProviderLoaded] = useState(false);
   const [currentStep, setCurrentStep] = useState(0);
   const [purchaseComplete, setPurchaseComplete] = useState(false);
   const [purchasedNumber, setPurchasedNumber] = useState('');
   const [skipMode, setSkipMode] = useState(false);
   const [skipping, setSkipping] = useState(false);
+
+  // Load voice provider from user profile (selected in ProfileStep)
+  useEffect(() => {
+    const fetchVoiceProvider = async () => {
+      if (!user) return;
+      
+      try {
+        const { data: profile, error } = await supabase
+          .from('profiles')
+          .select('voice_provider')
+          .eq('user_id', user.id)
+          .single();
+        
+        if (error) {
+          console.error('Error fetching profile:', error);
+          return;
+        }
+        
+        if (profile?.voice_provider) {
+          setVoiceProvider(profile.voice_provider as 'elevenlabs' | 'vapi');
+        }
+      } catch (err) {
+        console.error('Error loading voice provider:', err);
+      } finally {
+        setProviderLoaded(true);
+      }
+    };
+    
+    fetchVoiceProvider();
+  }, [user]);
 
   const handlePurchase = async () => {
     setPurchasing(true);
