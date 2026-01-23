@@ -14,28 +14,41 @@ serve(async (req) => {
   try {
     const ELEVENLABS_API_KEY = Deno.env.get('ELEVENLABS_API_KEY');
     const SUPABASE_URL = Deno.env.get('SUPABASE_URL');
+    const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY');
     const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
 
     if (!ELEVENLABS_API_KEY) {
       throw new Error('ELEVENLABS_API_KEY is not configured');
     }
 
-    // Get auth token from request
+    // Validate auth token
     const authHeader = req.headers.get('Authorization');
-    if (!authHeader) {
-      throw new Error('No authorization header');
+    if (!authHeader?.startsWith('Bearer ')) {
+      return new Response(
+        JSON.stringify({ success: false, error: 'Unauthorized' }),
+        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
     }
 
-    // Create Supabase client with service role
-    const supabase = createClient(SUPABASE_URL!, SUPABASE_SERVICE_ROLE_KEY!);
-    
-    // Get user from token
+    // Create client with auth header for validation
+    const supabaseAuth = createClient(SUPABASE_URL!, SUPABASE_ANON_KEY!, {
+      global: { headers: { Authorization: authHeader } }
+    });
+
     const token = authHeader.replace('Bearer ', '');
-    const { data: { user }, error: userError } = await supabase.auth.getUser(token);
+    const { data: claimsData, error: claimsError } = await supabaseAuth.auth.getClaims(token);
     
-    if (userError || !user) {
-      throw new Error('Unauthorized');
+    if (claimsError || !claimsData?.claims) {
+      return new Response(
+        JSON.stringify({ success: false, error: 'Unauthorized' }),
+        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
     }
+
+    const userId = claimsData.claims.sub;
+
+    // Create service role client for database operations
+    const supabase = createClient(SUPABASE_URL!, SUPABASE_SERVICE_ROLE_KEY!);
 
     const { phone_number_id, voice_id } = await req.json();
 
@@ -47,7 +60,7 @@ serve(async (req) => {
     const { data: profile, error: profileError } = await supabase
       .from('profiles')
       .select('*')
-      .eq('user_id', user.id)
+      .eq('user_id', userId)
       .single();
 
     if (profileError) {
@@ -58,7 +71,7 @@ serve(async (req) => {
     const { data: script } = await supabase
       .from('scripts')
       .select('*')
-      .eq('user_id', user.id)
+      .eq('user_id', userId)
       .eq('is_active', true)
       .single();
 
@@ -66,7 +79,7 @@ serve(async (req) => {
 
     // Step 1: Create Agent if user doesn't have one
     if (!agentId) {
-      console.log('Creating new agent for user:', user.id);
+      console.log('Creating new agent for user:', userId);
       
       const businessName = profile?.business_name || 'העסק שלי';
       const businessType = profile?.business_type || 'עסק';
@@ -160,7 +173,7 @@ serve(async (req) => {
       await supabase
         .from('profiles')
         .update({ elevenlabs_agent_id: agentId })
-        .eq('user_id', user.id);
+        .eq('user_id', userId);
     }
 
     // Step 2: Purchase the phone number from ElevenLabs
@@ -223,7 +236,7 @@ serve(async (req) => {
     const { data: phoneRecord, error: dbError } = await supabase
       .from('phone_numbers')
       .insert({
-        user_id: user.id,
+        user_id: userId,
         elevenlabs_phone_id: purchasedPhoneId,
         elevenlabs_agent_id: agentId,
         phone_number: phoneNumber,

@@ -1,10 +1,10 @@
 project_id = "aibwnlcsbwhprbnavpgo"
 
 [functions.elevenlabs-get-available-numbers]
-verify_jwt = true
+verify_jwt = false
 
 [functions.elevenlabs-purchase-number]
-verify_jwt = true
+verify_jwt = false
 
 [functions.elevenlabs-webhook]
 verify_jwt = false
@@ -13,10 +13,10 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.elevenlabs-create-agent]
-verify_jwt = true
+verify_jwt = false
 
 [functions.elevenlabs-update-agent]
-verify_jwt = true
+verify_jwt = false
 
 [functions.elevenlabs-get-voices]
-verify_jwt = true
+verify_jwt = false
