@@ -7,10 +7,11 @@ import { Label } from '@/components/ui/label';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
-import { User, Building2, Phone, MapPin, Loader2, Save, Volume2, Play, Pause, Languages } from 'lucide-react';
+import { User, Building2, Phone, MapPin, Loader2, Save, Volume2, Play, Pause, Languages, Zap, Globe } from 'lucide-react';
 import { PhoneNumberManager } from '@/components/phone/PhoneNumberManager';
 import { VoiceSelector } from '@/components/phone/VoiceSelector';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import { type VoiceProvider, getProviderInfo, setVoiceProvider } from '@/lib/voice-provider';
 
 interface Profile {
   business_name: string | null;
@@ -18,6 +19,8 @@ interface Profile {
   phone: string | null;
   address: string | null;
   elevenlabs_agent_id: string | null;
+  vapi_assistant_id: string | null;
+  voice_provider: VoiceProvider | null;
 }
 
 export default function Settings() {
@@ -28,6 +31,8 @@ export default function Settings() {
     phone: '',
     address: '',
     elevenlabs_agent_id: null,
+    vapi_assistant_id: null,
+    voice_provider: 'elevenlabs',
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -37,6 +42,7 @@ export default function Settings() {
   const [currentVoicePreviewUrl, setCurrentVoicePreviewUrl] = useState<string | null>(null);
   const [savingVoice, setSavingVoice] = useState(false);
   const [savingLanguage, setSavingLanguage] = useState(false);
+  const [savingProvider, setSavingProvider] = useState(false);
   const [playingPreview, setPlayingPreview] = useState(false);
   const [audioElement, setAudioElement] = useState<HTMLAudioElement | null>(null);
 
@@ -70,6 +76,8 @@ export default function Settings() {
           phone: data.phone || '',
           address: data.address || '',
           elevenlabs_agent_id: data.elevenlabs_agent_id || null,
+          vapi_assistant_id: data.vapi_assistant_id || null,
+          voice_provider: (data.voice_provider as VoiceProvider) || 'elevenlabs',
         });
       }
     } catch (error) {
@@ -180,7 +188,7 @@ export default function Settings() {
   };
 
   const handleLanguageChange = async (langCode: string) => {
-    if (!profile.elevenlabs_agent_id) {
+    if (!profile.elevenlabs_agent_id && !profile.vapi_assistant_id) {
       toast.error('יש לרכוש מספר טלפון קודם כדי לשנות שפה');
       return;
     }
@@ -213,8 +221,12 @@ export default function Settings() {
         .update({ language: langCode })
         .eq('id', scriptId);
 
-      // Update the agent with new language
-      const { data, error } = await supabase.functions.invoke('elevenlabs-update-agent', {
+      // Update the agent based on the current provider
+      const updateFunction = profile.voice_provider === 'vapi' 
+        ? 'vapi-update-assistant' 
+        : 'elevenlabs-update-agent';
+
+      const { data, error } = await supabase.functions.invoke(updateFunction, {
         body: { 
           script_id: scriptId,
           language: langCode 
@@ -244,7 +256,7 @@ export default function Settings() {
   const handleVoiceChange = async (voiceId: string, voiceName?: string) => {
     setSelectedVoiceId(voiceId);
     
-    if (!profile.elevenlabs_agent_id) {
+    if (!profile.elevenlabs_agent_id && !profile.vapi_assistant_id) {
       toast.error('יש לרכוש מספר טלפון קודם כדי לשנות קול');
       return;
     }
@@ -274,8 +286,12 @@ export default function Settings() {
         .update({ voice_id: voiceId })
         .eq('id', scriptId);
 
-      // Call update agent with new voice
-      const { data, error } = await supabase.functions.invoke('elevenlabs-update-agent', {
+      // Call update agent based on current provider
+      const updateFunction = profile.voice_provider === 'vapi' 
+        ? 'vapi-update-assistant' 
+        : 'elevenlabs-update-agent';
+
+      const { data, error } = await supabase.functions.invoke(updateFunction, {
         body: { 
           script_id: scriptId,
           voice_id: voiceId 
@@ -413,10 +429,116 @@ export default function Settings() {
         {/* Phone Number Management */}
         <PhoneNumberManager />
 
+        {/* Voice Provider Selection */}
+        {(profile.elevenlabs_agent_id || profile.vapi_assistant_id) && (
+          <Card className="border-0 shadow-sm">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Zap className="h-5 w-5 text-primary" />
+                ספק Voice AI
+              </CardTitle>
+              <CardDescription>
+                בחר את הספק שישמש לשיחות הסוכן שלך
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {savingProvider && (
+                <div className="flex items-center gap-2 mb-4 text-sm text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  מעדכן את הספק...
+                </div>
+              )}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {/* ElevenLabs Option */}
+                <div
+                  className={`relative p-4 rounded-xl border-2 cursor-pointer transition-all ${
+                    profile.voice_provider === 'elevenlabs'
+                      ? 'border-primary bg-primary/5 shadow-md'
+                      : 'border-border hover:border-primary/50 hover:bg-muted/30'
+                  } ${savingProvider ? 'opacity-50 pointer-events-none' : ''}`}
+                  onClick={async () => {
+                    if (savingProvider || profile.voice_provider === 'elevenlabs') return;
+                    setSavingProvider(true);
+                    const success = await setVoiceProvider(user!.id, 'elevenlabs');
+                    if (success) {
+                      setProfile({ ...profile, voice_provider: 'elevenlabs' });
+                      toast.success('הספק עודכן ל-ElevenLabs');
+                    } else {
+                      toast.error('שגיאה בעדכון הספק');
+                    }
+                    setSavingProvider(false);
+                  }}
+                >
+                  {profile.voice_provider === 'elevenlabs' && (
+                    <div className="absolute top-2 left-2 w-3 h-3 rounded-full bg-primary" />
+                  )}
+                  <div className="flex items-start gap-3">
+                    <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-yellow-400 to-orange-500 flex items-center justify-center text-white text-xl">
+                      ⚡
+                    </div>
+                    <div className="flex-1">
+                      <h4 className="font-semibold">ElevenLabs</h4>
+                      <p className="text-sm text-muted-foreground mt-1">
+                        מהיר ואיכותי • מתאים לאנגלית
+                      </p>
+                      <div className="flex flex-wrap gap-1 mt-2">
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700">מהיר</span>
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">עלות נמוכה</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Vapi Option */}
+                <div
+                  className={`relative p-4 rounded-xl border-2 cursor-pointer transition-all ${
+                    profile.voice_provider === 'vapi'
+                      ? 'border-primary bg-primary/5 shadow-md'
+                      : 'border-border hover:border-primary/50 hover:bg-muted/30'
+                  } ${savingProvider ? 'opacity-50 pointer-events-none' : ''}`}
+                  onClick={async () => {
+                    if (savingProvider || profile.voice_provider === 'vapi') return;
+                    setSavingProvider(true);
+                    const success = await setVoiceProvider(user!.id, 'vapi');
+                    if (success) {
+                      setProfile({ ...profile, voice_provider: 'vapi' });
+                      toast.success('הספק עודכן ל-Vapi.ai');
+                    } else {
+                      toast.error('שגיאה בעדכון הספק');
+                    }
+                    setSavingProvider(false);
+                  }}
+                >
+                  {profile.voice_provider === 'vapi' && (
+                    <div className="absolute top-2 left-2 w-3 h-3 rounded-full bg-primary" />
+                  )}
+                  <div className="flex items-start gap-3">
+                    <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white text-xl">
+                      🌍
+                    </div>
+                    <div className="flex-1">
+                      <h4 className="font-semibold">Vapi.ai</h4>
+                      <p className="text-sm text-muted-foreground mt-1">
+                        תמיכה מלאה בעברית וערבית
+                      </p>
+                      <div className="flex flex-wrap gap-1 mt-2">
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-purple-100 text-purple-700">עברית מלאה</span>
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-orange-100 text-orange-700">ערבית</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <p className="mt-4 text-sm text-muted-foreground">
+                💡 <strong>טיפ:</strong> Vapi.ai מומלץ אם רוב הלקוחות שלך מדברים עברית או ערבית
+              </p>
+            </CardContent>
+          </Card>
+        )}
+
         {/* Language & Voice Settings */}
-        {profile.elevenlabs_agent_id && (
+        {(profile.elevenlabs_agent_id || profile.vapi_assistant_id) && (
           <>
-            {/* Language Selection */}
             <Card className="border-0 shadow-sm">
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">

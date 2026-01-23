@@ -1,11 +1,14 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { useConversation } from '@elevenlabs/react';
+import Vapi from '@vapi-ai/web';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Mic, MicOff, Phone, PhoneOff, Volume2, Loader2, ArrowLeft, ArrowRight, Languages } from 'lucide-react';
+import { Mic, Phone, PhoneOff, Volume2, Loader2, ArrowLeft, ArrowRight, Languages } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
+import { useAuth } from '@/contexts/AuthContext';
+import { getVoiceProvider, getVoiceProviderCredentials, type VoiceProvider } from '@/lib/voice-provider';
 
 interface AgentTestStepProps {
   onComplete: () => void;
@@ -45,11 +48,9 @@ function AudioVisualizer({
       
       setLevels(prev => {
         const newLevels = [...prev];
-        // Shift all levels to the left
         for (let i = 0; i < newLevels.length - 1; i++) {
           newLevels[i] = newLevels[i + 1];
         }
-        // Add new level at the end with some randomization for visual interest
         const normalizedVolume = Math.min(volume * 2, 1);
         const variation = (Math.random() - 0.5) * 0.2;
         newLevels[newLevels.length - 1] = Math.max(0.1, Math.min(1, normalizedVolume + variation));
@@ -136,7 +137,6 @@ function CircularWaveform({
 
   return (
     <div className="relative flex items-center justify-center">
-      {/* Outer glow ring */}
       <div 
         className={`absolute w-24 h-24 rounded-full transition-all duration-150 ${
           isSpeaking ? 'bg-primary/20' : 'bg-green-500/20'
@@ -147,7 +147,6 @@ function CircularWaveform({
         }}
       />
       
-      {/* Middle ring */}
       <div 
         className={`absolute w-20 h-20 rounded-full border-2 transition-all duration-100 ${
           isSpeaking 
@@ -159,7 +158,6 @@ function CircularWaveform({
         }}
       />
       
-      {/* Inner circle with icon */}
       <div 
         className={`relative w-16 h-16 rounded-full flex items-center justify-center transition-all duration-100 ${
           isSpeaking 
@@ -177,7 +175,6 @@ function CircularWaveform({
         )}
       </div>
 
-      {/* Ripple effect when speaking */}
       {isActive && (
         <>
           <div 
@@ -199,57 +196,122 @@ function CircularWaveform({
 }
 
 export function AgentTestStep({ onComplete, onBack }: AgentTestStepProps) {
+  const { user } = useAuth();
   const [isConnecting, setIsConnecting] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
   const [hasTestedAgent, setHasTestedAgent] = useState(false);
   const [micPermissionDenied, setMicPermissionDenied] = useState(false);
+  const [currentProvider, setCurrentProvider] = useState<VoiceProvider>('elevenlabs');
+  const [isConnected, setIsConnected] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  
+  // Vapi instance ref
+  const vapiRef = useRef<Vapi | null>(null);
+  
+  // Volume levels for visualization
+  const inputVolumeRef = useRef(0);
+  const outputVolumeRef = useRef(0);
 
-  const conversation = useConversation({
+  // ElevenLabs conversation hook
+  const elevenLabsConversation = useConversation({
     onConnect: () => {
-      console.log("Connected to agent");
+      console.log("Connected to ElevenLabs agent");
+      setIsConnected(true);
       toast.success("מחובר לסוכן! אפשר להתחיל לדבר");
     },
     onDisconnect: () => {
-      console.log("Disconnected from agent");
+      console.log("Disconnected from ElevenLabs agent");
+      setIsConnected(false);
       if (messages.length > 0) {
         setHasTestedAgent(true);
       }
     },
     onMessage: (message: unknown) => {
-      console.log("Message received:", message);
-      
+      console.log("ElevenLabs message:", message);
       const msg = message as { type?: string; user_transcription_event?: { user_transcript?: string }; agent_response_event?: { agent_response?: string } };
       
       if (msg.type === "user_transcript") {
         const transcript = msg.user_transcription_event?.user_transcript;
         if (transcript) {
-          setMessages(prev => [...prev, {
-            role: 'user',
-            text: transcript,
-            timestamp: new Date()
-          }]);
+          setMessages(prev => [...prev, { role: 'user', text: transcript, timestamp: new Date() }]);
         }
       }
       
       if (msg.type === "agent_response") {
         const response = msg.agent_response_event?.agent_response;
         if (response) {
-          setMessages(prev => [...prev, {
-            role: 'agent',
-            text: response,
-            timestamp: new Date()
-          }]);
+          setMessages(prev => [...prev, { role: 'agent', text: response, timestamp: new Date() }]);
         }
       }
     },
     onError: (error: unknown) => {
-      console.error("Conversation error:", error);
+      console.error("ElevenLabs error:", error);
       toast.error("שגיאה בהתחברות לסוכן");
       setIsConnecting(false);
+      setIsConnected(false);
     },
   });
 
+  // Initialize Vapi event handlers
+  const setupVapiEventHandlers = useCallback((vapi: Vapi) => {
+    vapi.on('call-start', () => {
+      console.log("Vapi call started");
+      setIsConnected(true);
+      toast.success("מחובר לסוכן! אפשר להתחיל לדבר");
+    });
+
+    vapi.on('call-end', () => {
+      console.log("Vapi call ended");
+      setIsConnected(false);
+      if (messages.length > 0) {
+        setHasTestedAgent(true);
+      }
+    });
+
+    vapi.on('speech-start', () => {
+      setIsSpeaking(true);
+    });
+
+    vapi.on('speech-end', () => {
+      setIsSpeaking(false);
+    });
+
+    vapi.on('message', (message: any) => {
+      console.log("Vapi message:", message);
+      
+      if (message.type === 'transcript' && message.transcriptType === 'final') {
+        if (message.role === 'user') {
+          setMessages(prev => [...prev, { role: 'user', text: message.transcript, timestamp: new Date() }]);
+        } else if (message.role === 'assistant') {
+          setMessages(prev => [...prev, { role: 'agent', text: message.transcript, timestamp: new Date() }]);
+        }
+      }
+    });
+
+    vapi.on('volume-level', (volume: number) => {
+      outputVolumeRef.current = volume;
+    });
+
+    vapi.on('error', (error: any) => {
+      console.error("Vapi error:", error);
+      toast.error("שגיאה בהתחברות לסוכן");
+      setIsConnecting(false);
+      setIsConnected(false);
+    });
+  }, [messages.length]);
+
+  // Fetch current provider on mount
+  useEffect(() => {
+    if (user) {
+      getVoiceProvider(user.id).then(config => {
+        setCurrentProvider(config.provider);
+      });
+    }
+  }, [user]);
+
   const startTest = useCallback(async () => {
+    if (!user) return;
+    
     setIsConnecting(true);
     setMessages([]);
     
@@ -265,64 +327,110 @@ export function AgentTestStep({ onComplete, onBack }: AgentTestStepProps) {
         return;
       }
 
-      // Get signed URL from edge function
-      const { data, error } = await supabase.functions.invoke('elevenlabs-conversation-token');
+      // Get current provider config
+      const providerConfig = await getVoiceProvider(user.id);
+      setCurrentProvider(providerConfig.provider);
 
-      if (error || !data?.signed_url) {
-        console.error("Failed to get conversation token:", error);
+      // Get credentials for the provider
+      const credentials = await getVoiceProviderCredentials(providerConfig.provider);
+      
+      if (!credentials.success) {
+        console.error("Failed to get credentials:", credentials.error);
         toast.error("שגיאה בהתחברות לסוכן");
         setIsConnecting(false);
         return;
       }
 
-      console.log("Got signed URL, starting session...");
+      if (providerConfig.provider === 'vapi') {
+        // Start Vapi conversation
+        console.log("Starting Vapi conversation with assistant:", credentials.assistant_id);
+        
+        if (!credentials.public_key || !credentials.assistant_id) {
+          throw new Error("Missing Vapi credentials");
+        }
 
-      // Start the conversation with WebSocket
-      await conversation.startSession({
-        signedUrl: data.signed_url,
-      });
+        const vapi = new Vapi(credentials.public_key);
+        vapiRef.current = vapi;
+        setupVapiEventHandlers(vapi);
+        
+        await vapi.start(credentials.assistant_id);
+        
+      } else {
+        // Start ElevenLabs conversation
+        console.log("Starting ElevenLabs conversation with signed URL");
+        
+        if (!credentials.signed_url) {
+          throw new Error("Missing ElevenLabs signed URL");
+        }
+
+        await elevenLabsConversation.startSession({
+          signedUrl: credentials.signed_url,
+        });
+      }
 
     } catch (error) {
       console.error("Failed to start test:", error);
       toast.error("שגיאה בהתחלת הבדיקה");
+      setIsConnected(false);
     } finally {
       setIsConnecting(false);
     }
-  }, [conversation]);
+  }, [user, elevenLabsConversation, setupVapiEventHandlers]);
 
   const stopTest = useCallback(async () => {
-    await conversation.endSession();
+    if (currentProvider === 'vapi' && vapiRef.current) {
+      vapiRef.current.stop();
+      vapiRef.current = null;
+    } else {
+      await elevenLabsConversation.endSession();
+    }
+    setIsConnected(false);
     setHasTestedAgent(true);
-  }, [conversation]);
+  }, [currentProvider, elevenLabsConversation]);
 
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      if (conversation.status === 'connected') {
-        conversation.endSession();
+      if (vapiRef.current) {
+        vapiRef.current.stop();
+        vapiRef.current = null;
+      }
+      if (elevenLabsConversation.status === 'connected') {
+        elevenLabsConversation.endSession();
       }
     };
-  }, [conversation]);
+  }, [elevenLabsConversation]);
 
-  const isConnected = conversation.status === 'connected';
-  const isSpeaking = conversation.isSpeaking;
+  // Update isSpeaking for ElevenLabs
+  useEffect(() => {
+    if (currentProvider === 'elevenlabs') {
+      setIsSpeaking(elevenLabsConversation.isSpeaking);
+      setIsConnected(elevenLabsConversation.status === 'connected');
+    }
+  }, [currentProvider, elevenLabsConversation.isSpeaking, elevenLabsConversation.status]);
 
-  // Volume getters with fallback
+  // Volume getters
   const getInputVolume = useCallback(() => {
+    if (currentProvider === 'vapi') {
+      return inputVolumeRef.current;
+    }
     try {
-      return conversation.getInputVolume?.() ?? 0;
+      return elevenLabsConversation.getInputVolume?.() ?? 0;
     } catch {
       return 0;
     }
-  }, [conversation]);
+  }, [currentProvider, elevenLabsConversation]);
 
   const getOutputVolume = useCallback(() => {
+    if (currentProvider === 'vapi') {
+      return outputVolumeRef.current;
+    }
     try {
-      return conversation.getOutputVolume?.() ?? 0;
+      return elevenLabsConversation.getOutputVolume?.() ?? 0;
     } catch {
       return 0;
     }
-  }, [conversation]);
+  }, [currentProvider, elevenLabsConversation]);
 
   return (
     <Card className="border-0 shadow-xl bg-card/80 backdrop-blur">
@@ -334,6 +442,11 @@ export function AgentTestStep({ onComplete, onBack }: AgentTestStepProps) {
         <CardDescription className="text-base">
           דבר עם הסוכן ובדוק שהוא מבין אותך • נסה לדבר בעברית, ערבית או אנגלית
         </CardDescription>
+        {/* Provider indicator */}
+        <div className="mt-2 inline-flex items-center gap-2 px-3 py-1 rounded-full bg-muted text-sm">
+          <span>{currentProvider === 'vapi' ? '🌍' : '⚡'}</span>
+          <span>ספק: {currentProvider === 'vapi' ? 'Vapi.ai (עברית מלאה)' : 'ElevenLabs'}</span>
+        </div>
       </CardHeader>
 
       <CardContent className="space-y-6">
@@ -382,7 +495,7 @@ export function AgentTestStep({ onComplete, onBack }: AgentTestStepProps) {
           </div>
         )}
 
-        {/* Connection Status - only show when not connected */}
+        {/* Connection Status */}
         {!isConnected && (
           <div className="flex items-center justify-center gap-3 p-4 rounded-xl bg-muted/50">
             <div className="h-4 w-4 rounded-full bg-muted-foreground/30" />
