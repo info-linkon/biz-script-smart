@@ -149,6 +149,7 @@ export type Database = {
         Row: {
           country_code: string
           created_at: string | null
+          elevenlabs_agent_id: string | null
           elevenlabs_phone_id: string
           id: string
           is_active: boolean | null
@@ -162,6 +163,7 @@ export type Database = {
         Insert: {
           country_code?: string
           created_at?: string | null
+          elevenlabs_agent_id?: string | null
           elevenlabs_phone_id: string
           id?: string
           is_active?: boolean | null
@@ -175,6 +177,7 @@ export type Database = {
         Update: {
           country_code?: string
           created_at?: string | null
+          elevenlabs_agent_id?: string | null
           elevenlabs_phone_id?: string
           id?: string
           is_active?: boolean | null
@@ -193,6 +196,7 @@ export type Database = {
           business_name: string | null
           business_type: string | null
           created_at: string
+          elevenlabs_agent_id: string | null
           id: string
           is_admin: boolean | null
           phone: string | null
@@ -207,6 +211,7 @@ export type Database = {
           business_name?: string | null
           business_type?: string | null
           created_at?: string
+          elevenlabs_agent_id?: string | null
           id?: string
           is_admin?: boolean | null
           phone?: string | null
@@ -221,6 +226,7 @@ export type Database = {
           business_name?: string | null
           business_type?: string | null
           created_at?: string
+          elevenlabs_agent_id?: string | null
           id?: string
           is_admin?: boolean | null
           phone?: string | null

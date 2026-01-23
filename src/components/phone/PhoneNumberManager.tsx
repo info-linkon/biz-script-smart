@@ -8,10 +8,12 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 import { Phone, Plus, Loader2, CheckCircle, AlertCircle, Copy, PhoneForwarded } from 'lucide-react';
+import { VoiceSelector } from './VoiceSelector';
 
 interface PhoneNumber {
   id: string;
   elevenlabs_phone_id: string;
+  elevenlabs_agent_id?: string;
   phone_number: string;
   country_code: string;
   status: string;
@@ -27,9 +29,6 @@ interface AvailableNumber {
   monthly_cost?: number;
 }
 
-// ElevenLabs Agent ID - should be configured in the ElevenLabs dashboard
-const ELEVENLABS_AGENT_ID = 'YOUR_AGENT_ID'; // TODO: Set this after creating the agent
-
 export function PhoneNumberManager() {
   const { user } = useAuth();
   const [phoneNumbers, setPhoneNumbers] = useState<PhoneNumber[]>([]);
@@ -40,6 +39,8 @@ export function PhoneNumberManager() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [selectedCountry, setSelectedCountry] = useState('IL');
   const [selectedNumber, setSelectedNumber] = useState<AvailableNumber | null>(null);
+  const [selectedVoiceId, setSelectedVoiceId] = useState<string | null>(null);
+  const [currentStep, setCurrentStep] = useState<'number' | 'voice'>('number');
 
   useEffect(() => {
     if (user) {
@@ -95,16 +96,18 @@ export function PhoneNumberManager() {
       const { data, error } = await supabase.functions.invoke('elevenlabs-purchase-number', {
         body: {
           phone_number_id: selectedNumber.phone_number_id,
-          agent_id: ELEVENLABS_AGENT_ID,
+          voice_id: selectedVoiceId || undefined,
         }
       });
 
       if (error) throw error;
       
       if (data.success) {
-        toast.success('המספר נרכש בהצלחה!');
+        toast.success('המספר נרכש והסוכן נוצר בהצלחה!');
         setDialogOpen(false);
         setSelectedNumber(null);
+        setSelectedVoiceId(null);
+        setCurrentStep('number');
         fetchPhoneNumbers();
       } else {
         throw new Error(data.error || 'Failed to purchase number');
@@ -117,6 +120,18 @@ export function PhoneNumberManager() {
     }
   };
 
+  const handleNextStep = () => {
+    if (currentStep === 'number' && selectedNumber) {
+      setCurrentStep('voice');
+    }
+  };
+
+  const handleBackStep = () => {
+    if (currentStep === 'voice') {
+      setCurrentStep('number');
+    }
+  };
+
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text);
     toast.success('המספר הועתק ללוח');
@@ -124,6 +139,9 @@ export function PhoneNumberManager() {
 
   const openPurchaseDialog = () => {
     setDialogOpen(true);
+    setCurrentStep('number');
+    setSelectedNumber(null);
+    setSelectedVoiceId(null);
     fetchAvailableNumbers();
   };
 
@@ -174,83 +192,112 @@ export function PhoneNumberManager() {
               </DialogTrigger>
               <DialogContent className="max-w-md" dir="rtl">
                 <DialogHeader>
-                  <DialogTitle>רכישת מספר טלפון</DialogTitle>
+                  <DialogTitle>
+                    {currentStep === 'number' ? 'רכישת מספר טלפון' : 'בחירת קול לסוכן'}
+                  </DialogTitle>
                   <DialogDescription>
-                    בחר מספר טלפון שיוקצה לעסק שלך
+                    {currentStep === 'number' 
+                      ? 'בחר מספר טלפון שיוקצה לעסק שלך' 
+                      : 'בחר את הקול שבו הסוכן ידבר עם הלקוחות'}
                   </DialogDescription>
                 </DialogHeader>
                 
-                <div className="space-y-4 py-4">
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">בחר מדינה</label>
-                    <Select value={selectedCountry} onValueChange={handleCountryChange}>
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="IL">🇮🇱 ישראל</SelectItem>
-                        <SelectItem value="US">🇺🇸 ארה"ב</SelectItem>
-                        <SelectItem value="GB">🇬🇧 בריטניה</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
+                {currentStep === 'number' ? (
+                  <div className="space-y-4 py-4">
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">בחר מדינה</label>
+                      <Select value={selectedCountry} onValueChange={handleCountryChange}>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="IL">🇮🇱 ישראל</SelectItem>
+                          <SelectItem value="US">🇺🇸 ארה"ב</SelectItem>
+                          <SelectItem value="GB">🇬🇧 בריטניה</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
 
-                  {loadingAvailable ? (
-                    <div className="flex items-center justify-center py-8">
-                      <Loader2 className="h-6 w-6 animate-spin text-primary" />
-                    </div>
-                  ) : availableNumbers.length === 0 ? (
-                    <div className="text-center py-6 text-muted-foreground">
-                      <AlertCircle className="h-8 w-8 mx-auto mb-2 opacity-50" />
-                      <p>אין מספרים זמינים במדינה זו כרגע</p>
-                    </div>
-                  ) : (
-                    <div className="space-y-2 max-h-64 overflow-y-auto">
-                      {availableNumbers.map((number) => (
-                        <button
-                          key={number.phone_number_id}
-                          onClick={() => setSelectedNumber(number)}
-                          className={`w-full p-3 rounded-lg border text-right transition-colors ${
-                            selectedNumber?.phone_number_id === number.phone_number_id
-                              ? 'border-primary bg-primary/5'
-                              : 'border-border hover:border-primary/50'
-                          }`}
-                        >
-                          <div className="flex items-center justify-between">
-                            <span className="font-mono text-lg" dir="ltr">{number.phone_number}</span>
-                            {selectedNumber?.phone_number_id === number.phone_number_id && (
-                              <CheckCircle className="h-5 w-5 text-primary" />
+                    {loadingAvailable ? (
+                      <div className="flex items-center justify-center py-8">
+                        <Loader2 className="h-6 w-6 animate-spin text-primary" />
+                      </div>
+                    ) : availableNumbers.length === 0 ? (
+                      <div className="text-center py-6 text-muted-foreground">
+                        <AlertCircle className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                        <p>אין מספרים זמינים במדינה זו כרגע</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-2 max-h-64 overflow-y-auto">
+                        {availableNumbers.map((number) => (
+                          <button
+                            key={number.phone_number_id}
+                            onClick={() => setSelectedNumber(number)}
+                            className={`w-full p-3 rounded-lg border text-right transition-colors ${
+                              selectedNumber?.phone_number_id === number.phone_number_id
+                                ? 'border-primary bg-primary/5'
+                                : 'border-border hover:border-primary/50'
+                            }`}
+                          >
+                            <div className="flex items-center justify-between">
+                              <span className="font-mono text-lg" dir="ltr">{number.phone_number}</span>
+                              {selectedNumber?.phone_number_id === number.phone_number_id && (
+                                <CheckCircle className="h-5 w-5 text-primary" />
+                              )}
+                            </div>
+                            {number.monthly_cost && (
+                              <p className="text-sm text-muted-foreground mt-1">
+                                ${number.monthly_cost}/חודש
+                              </p>
                             )}
-                          </div>
-                          {number.monthly_cost && (
-                            <p className="text-sm text-muted-foreground mt-1">
-                              ${number.monthly_cost}/חודש
-                            </p>
-                          )}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="py-4">
+                    <VoiceSelector 
+                      selectedVoiceId={selectedVoiceId} 
+                      onSelect={setSelectedVoiceId}
+                      compact
+                    />
+                  </div>
+                )}
 
                 <DialogFooter>
+                  {currentStep === 'voice' && (
+                    <Button variant="outline" onClick={handleBackStep}>
+                      חזור
+                    </Button>
+                  )}
                   <Button variant="outline" onClick={() => setDialogOpen(false)}>
                     ביטול
                   </Button>
-                  <Button 
-                    onClick={purchaseNumber} 
-                    disabled={!selectedNumber || purchasing}
-                    className="gradient-primary text-white"
-                  >
-                    {purchasing ? (
-                      <>
-                        <Loader2 className="ml-2 h-4 w-4 animate-spin" />
-                        רוכש...
-                      </>
-                    ) : (
-                      'רכוש מספר'
-                    )}
-                  </Button>
+                  {currentStep === 'number' ? (
+                    <Button 
+                      onClick={handleNextStep} 
+                      disabled={!selectedNumber}
+                      className="gradient-primary text-white"
+                    >
+                      הבא
+                    </Button>
+                  ) : (
+                    <Button 
+                      onClick={purchaseNumber} 
+                      disabled={purchasing}
+                      className="gradient-primary text-white"
+                    >
+                      {purchasing ? (
+                        <>
+                          <Loader2 className="ml-2 h-4 w-4 animate-spin" />
+                          יוצר סוכן...
+                        </>
+                      ) : (
+                        'רכוש והפעל'
+                      )}
+                    </Button>
+                  )}
                 </DialogFooter>
               </DialogContent>
             </Dialog>

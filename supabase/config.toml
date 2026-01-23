@@ -11,3 +11,12 @@ verify_jwt = false
 
 [functions.elevenlabs-schedule-appointment]
 verify_jwt = false
+
+[functions.elevenlabs-create-agent]
+verify_jwt = true
+
+[functions.elevenlabs-update-agent]
+verify_jwt = true
+
+[functions.elevenlabs-get-voices]
+verify_jwt = true

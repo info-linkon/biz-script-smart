@@ -26,7 +26,7 @@ serve(async (req) => {
       throw new Error('No authorization header');
     }
 
-    // Create Supabase client with user's token
+    // Create Supabase client with service role
     const supabase = createClient(SUPABASE_URL!, SUPABASE_SERVICE_ROLE_KEY!);
     
     // Get user from token
@@ -37,13 +37,135 @@ serve(async (req) => {
       throw new Error('Unauthorized');
     }
 
-    const { phone_number_id, agent_id } = await req.json();
+    const { phone_number_id, voice_id } = await req.json();
 
-    if (!phone_number_id || !agent_id) {
-      throw new Error('phone_number_id and agent_id are required');
+    if (!phone_number_id) {
+      throw new Error('phone_number_id is required');
     }
 
-    // Purchase the phone number from ElevenLabs
+    // Get user's profile
+    const { data: profile, error: profileError } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('user_id', user.id)
+      .single();
+
+    if (profileError) {
+      console.error('Profile fetch error:', profileError);
+    }
+
+    // Get user's active script
+    const { data: script } = await supabase
+      .from('scripts')
+      .select('*')
+      .eq('user_id', user.id)
+      .eq('is_active', true)
+      .single();
+
+    let agentId = profile?.elevenlabs_agent_id;
+
+    // Step 1: Create Agent if user doesn't have one
+    if (!agentId) {
+      console.log('Creating new agent for user:', user.id);
+      
+      const businessName = profile?.business_name || 'העסק שלי';
+      const businessType = profile?.business_type || 'עסק';
+      
+      const systemPrompt = buildSystemPrompt({
+        businessName,
+        businessType,
+        profile,
+        script,
+      });
+
+      const greetingMessage = script?.greeting_message || 
+        `שלום! הגעתם ל${businessName}. איך אני יכול לעזור לכם?`;
+
+      const agentPayload = {
+        name: `Assistant - ${businessName}`,
+        conversation_config: {
+          agent: {
+            prompt: {
+              prompt: systemPrompt,
+              tools: [
+                {
+                  type: "webhook",
+                  name: "schedule_appointment",
+                  description: "Schedule an appointment for the caller",
+                  webhook: {
+                    url: `${SUPABASE_URL}/functions/v1/elevenlabs-schedule-appointment`,
+                    method: "POST",
+                  },
+                  parameters: {
+                    type: "object",
+                    properties: {
+                      customer_name: {
+                        type: "string",
+                        description: "The name of the customer"
+                      },
+                      customer_phone: {
+                        type: "string",
+                        description: "The phone number of the customer"
+                      },
+                      date: {
+                        type: "string",
+                        description: "The date of the appointment (YYYY-MM-DD format)"
+                      },
+                      time: {
+                        type: "string",
+                        description: "The time of the appointment (HH:MM format)"
+                      },
+                      service: {
+                        type: "string",
+                        description: "The type of service or reason for the appointment"
+                      }
+                    },
+                    required: ["customer_name", "customer_phone", "date", "time"]
+                  }
+                }
+              ]
+            },
+            first_message: greetingMessage,
+            language: script?.language || "he"
+          },
+          tts: {
+            voice_id: voice_id || script?.voice_id || "21m00Tcm4TlvDq8ikWAM"
+          }
+        }
+      };
+
+      const createAgentResponse = await fetch(
+        'https://api.elevenlabs.io/v1/convai/agents/create',
+        {
+          method: 'POST',
+          headers: {
+            'xi-api-key': ELEVENLABS_API_KEY,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(agentPayload),
+        }
+      );
+
+      if (!createAgentResponse.ok) {
+        const errorText = await createAgentResponse.text();
+        console.error('ElevenLabs create agent error:', createAgentResponse.status, errorText);
+        throw new Error(`Failed to create agent: ${createAgentResponse.status}`);
+      }
+
+      const agentData = await createAgentResponse.json();
+      agentId = agentData.agent_id;
+      console.log('Created agent:', agentId);
+
+      // Save agent_id to profile
+      await supabase
+        .from('profiles')
+        .update({ elevenlabs_agent_id: agentId })
+        .eq('user_id', user.id);
+    }
+
+    // Step 2: Purchase the phone number from ElevenLabs
+    console.log('Purchasing phone number:', phone_number_id);
+    
     const purchaseResponse = await fetch(
       'https://api.elevenlabs.io/v1/convai/phone-numbers/purchase',
       {
@@ -70,7 +192,11 @@ serve(async (req) => {
     const countryCode = purchaseData.country_code || 'IL';
     const monthlyCost = purchaseData.monthly_cost || null;
 
-    // Connect the purchased number to the agent
+    console.log('Purchased phone number:', phoneNumber, 'ID:', purchasedPhoneId);
+
+    // Step 3: Connect the purchased number to the user's Agent
+    console.log('Connecting phone to agent:', agentId);
+    
     const connectResponse = await fetch(
       `https://api.elevenlabs.io/v1/convai/phone-numbers/${purchasedPhoneId}/agent`,
       {
@@ -80,7 +206,7 @@ serve(async (req) => {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          agent_id: agent_id,
+          agent_id: agentId,
         }),
       }
     );
@@ -89,14 +215,17 @@ serve(async (req) => {
       const errorText = await connectResponse.text();
       console.error('ElevenLabs connect error:', connectResponse.status, errorText);
       // Don't throw - number was purchased, just not connected yet
+    } else {
+      console.log('Connected phone to agent successfully');
     }
 
-    // Save to database
+    // Step 4: Save to database
     const { data: phoneRecord, error: dbError } = await supabase
       .from('phone_numbers')
       .insert({
         user_id: user.id,
         elevenlabs_phone_id: purchasedPhoneId,
+        elevenlabs_agent_id: agentId,
         phone_number: phoneNumber,
         country_code: countryCode,
         status: 'active',
@@ -113,7 +242,8 @@ serve(async (req) => {
     return new Response(
       JSON.stringify({ 
         success: true, 
-        phone_number: phoneRecord 
+        phone_number: phoneRecord,
+        agent_id: agentId,
       }),
       { 
         headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
@@ -134,3 +264,63 @@ serve(async (req) => {
     );
   }
 });
+
+// Helper function to build system prompt
+function buildSystemPrompt(params: {
+  businessName: string;
+  businessType: string;
+  profile: any;
+  script: any;
+}): string {
+  const { businessName, businessType, profile, script } = params;
+  
+  const businessPhone = profile?.phone || '';
+  const services = script?.services || [];
+  const faq = script?.faq || [];
+  const tone = script?.tone || 'friendly';
+  const businessHours = script?.business_hours || '';
+  const customPrompt = script?.custom_prompt || '';
+
+  const servicesString = services.length > 0 
+    ? `השירותים שלנו: ${services.join(', ')}` 
+    : '';
+
+  const faqString = faq.map((item: any) => 
+    `שאלה: ${item.question}\nתשובה: ${item.answer}`
+  ).join('\n\n');
+
+  const toneInstructions: Record<string, string> = {
+    friendly: 'דבר בצורה חברית וחמה, עם חיוך בקול.',
+    professional: 'דבר בצורה מקצועית ורצינית.',
+    casual: 'דבר בצורה קלילה ולא פורמלית.',
+    formal: 'דבר בצורה פורמלית ומכובדת.',
+  };
+  const toneInstruction = toneInstructions[tone] || toneInstructions.friendly;
+
+  return `
+אתה הסוכן הטלפוני של ${businessName} - ${businessType}.
+${toneInstruction}
+
+מידע על העסק:
+- שם העסק: ${businessName}
+- סוג העסק: ${businessType}
+${businessPhone ? `- טלפון: ${businessPhone}` : ''}
+${businessHours ? `- שעות פעילות: ${businessHours}` : ''}
+${servicesString}
+
+${faqString ? `שאלות נפוצות:\n${faqString}` : ''}
+
+${customPrompt ? `הנחיות נוספות:\n${customPrompt}` : ''}
+
+משימות עיקריות:
+1. ענה על שאלות לקוחות בנוגע לעסק
+2. קבע פגישות עבור לקוחות שמבקשים - השתמש בכלי schedule_appointment
+3. תעד את פרטי המתקשר ואת מטרת השיחה
+4. אם אינך יודע תשובה, הצע ללקוח להשאיר הודעה ונחזור אליו
+
+חשוב:
+- דבר תמיד בעברית
+- היה אדיב ומקצועי
+- לפני קביעת פגישה, בדוק את הזמינות
+`.trim();
+}
