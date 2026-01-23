@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useOnboardingStatus, OnboardingStep } from '@/hooks/useOnboardingStatus';
 import { OnboardingProgress } from '@/components/onboarding/OnboardingProgress';
 import { ProfileStep } from '@/components/onboarding/steps/ProfileStep';
+import { PlanStep } from '@/components/onboarding/steps/PlanStep';
 import { ScriptStep } from '@/components/onboarding/steps/ScriptStep';
 import { VoiceStep } from '@/components/onboarding/steps/VoiceStep';
 import { AgentTestStep } from '@/components/onboarding/steps/AgentTestStep';
@@ -16,6 +17,7 @@ export default function Onboarding() {
     isComplete, 
     currentStep: statusStep,
     hasBusinessProfile,
+    hasPlanSelected,
     hasActiveScript,
     hasVoiceSelected,
     hasPhoneNumber,
@@ -66,6 +68,7 @@ export default function Onboarding() {
   
   const completedSteps = {
     profile: hasBusinessProfile,
+    plan: hasPlanSelected,
     script: hasActiveScript,
     voice: hasVoiceSelected,
     test: hasAgent,
@@ -102,7 +105,14 @@ export default function Onboarding() {
           {currentStep === 'profile' && (
             <ProfileStep
               initialData={profile}
+              onComplete={() => handleStepComplete('plan')}
+            />
+          )}
+          
+          {currentStep === 'plan' && (
+            <PlanStep
               onComplete={() => handleStepComplete('script')}
+              onBack={() => handleBack('profile')}
             />
           )}
           
@@ -110,7 +120,7 @@ export default function Onboarding() {
             <ScriptStep
               initialData={activeScript}
               onComplete={() => handleStepComplete('voice')}
-              onBack={() => handleBack('profile')}
+              onBack={() => handleBack('plan')}
             />
           )}
           

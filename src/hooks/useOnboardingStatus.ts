@@ -2,13 +2,14 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
 
-export type OnboardingStep = 'profile' | 'script' | 'voice' | 'test' | 'phone' | 'done';
+export type OnboardingStep = 'profile' | 'plan' | 'script' | 'voice' | 'test' | 'phone' | 'done';
 
 export interface OnboardingStatus {
   isComplete: boolean;
   isLoading: boolean;
   currentStep: OnboardingStep;
   hasBusinessProfile: boolean;
+  hasPlanSelected: boolean;
   hasActiveScript: boolean;
   hasVoiceSelected: boolean;
   hasPhoneNumber: boolean;
@@ -19,6 +20,7 @@ export interface OnboardingStatus {
     phone: string | null;
     address: string | null;
     elevenlabs_agent_id: string | null;
+    subscription_plan_id: string | null;
   } | null;
   activeScript: {
     id: string;
@@ -53,7 +55,7 @@ export function useOnboardingStatus(): OnboardingStatus {
       const [profileRes, scriptsRes, phoneRes] = await Promise.all([
         supabase
           .from('profiles')
-          .select('business_name, business_type, phone, address, elevenlabs_agent_id')
+          .select('business_name, business_type, phone, address, elevenlabs_agent_id, subscription_plan_id')
           .eq('user_id', user.id)
           .single(),
         supabase
@@ -100,6 +102,7 @@ export function useOnboardingStatus(): OnboardingStatus {
 
   // Calculate status flags
   const hasBusinessProfile = !!(profile?.business_name && profile?.business_type);
+  const hasPlanSelected = !!(profile?.subscription_plan_id);
   const hasActiveScript = !!activeScript;
   const hasVoiceSelected = !!(activeScript?.voice_id);
   const hasPhoneNumber = !!(phoneNumber?.is_active);
@@ -108,15 +111,18 @@ export function useOnboardingStatus(): OnboardingStatus {
   // Determine current step
   let currentStep: OnboardingStep = 'profile';
   if (hasBusinessProfile) {
-    currentStep = 'script';
-    if (hasActiveScript) {
-      currentStep = 'voice';
-      if (hasVoiceSelected) {
-        currentStep = 'test';
-        if (hasAgent) {
-          currentStep = 'phone';
-          if (hasPhoneNumber) {
-            currentStep = 'done';
+    currentStep = 'plan';
+    if (hasPlanSelected) {
+      currentStep = 'script';
+      if (hasActiveScript) {
+        currentStep = 'voice';
+        if (hasVoiceSelected) {
+          currentStep = 'test';
+          if (hasAgent) {
+            currentStep = 'phone';
+            if (hasPhoneNumber) {
+              currentStep = 'done';
+            }
           }
         }
       }
@@ -130,6 +136,7 @@ export function useOnboardingStatus(): OnboardingStatus {
     isLoading,
     currentStep,
     hasBusinessProfile,
+    hasPlanSelected,
     hasActiveScript,
     hasVoiceSelected,
     hasPhoneNumber,
