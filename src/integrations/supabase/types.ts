@@ -160,6 +160,7 @@ export type Database = {
           twilio_sid: string | null
           updated_at: string | null
           user_id: string
+          vapi_assistant_id: string | null
         }
         Insert: {
           country_code?: string
@@ -175,6 +176,7 @@ export type Database = {
           twilio_sid?: string | null
           updated_at?: string | null
           user_id: string
+          vapi_assistant_id?: string | null
         }
         Update: {
           country_code?: string
@@ -190,6 +192,7 @@ export type Database = {
           twilio_sid?: string | null
           updated_at?: string | null
           user_id?: string
+          vapi_assistant_id?: string | null
         }
         Relationships: []
       }
@@ -207,6 +210,8 @@ export type Database = {
           subscription_status: string | null
           updated_at: string
           user_id: string
+          vapi_assistant_id: string | null
+          voice_provider: string | null
         }
         Insert: {
           address?: string | null
@@ -221,6 +226,8 @@ export type Database = {
           subscription_status?: string | null
           updated_at?: string
           user_id: string
+          vapi_assistant_id?: string | null
+          voice_provider?: string | null
         }
         Update: {
           address?: string | null
@@ -235,6 +242,8 @@ export type Database = {
           subscription_status?: string | null
           updated_at?: string
           user_id?: string
+          vapi_assistant_id?: string | null
+          voice_provider?: string | null
         }
         Relationships: [
           {
