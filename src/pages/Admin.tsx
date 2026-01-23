@@ -26,6 +26,7 @@ import { AdminSupport } from '@/components/admin/AdminSupport';
 interface User {
   id: string;
   user_id: string | null;
+  email: string | null;
   business_name: string | null;
   phone: string | null;
   is_admin: boolean;
@@ -167,6 +168,10 @@ const Admin = () => {
       return;
     }
 
+    // Get user emails using the security definer function
+    const { data: emailsData } = await supabase.rpc('get_users_with_email');
+    const emailMap = new Map(emailsData?.map((e: { user_id: string; email: string }) => [e.user_id, e.email]) || []);
+
     const { data: rolesData } = await supabase
       .from('user_roles')
       .select('user_id, role');
@@ -184,6 +189,7 @@ const Admin = () => {
     const usersWithPlans: User[] = (profilesData || []).map(u => ({
       id: u.id,
       user_id: u.user_id,
+      email: emailMap.get(u.user_id) || null,
       business_name: u.business_name,
       phone: u.phone,
       subscription_status: u.subscription_status,
