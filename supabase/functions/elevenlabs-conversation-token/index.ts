@@ -70,7 +70,7 @@ serve(async (req) => {
     if (!agentId) {
       console.log("No agent found, creating new agent...");
       
-      // Call the create-agent function
+      // Call the create-agent function with empty body
       const createAgentResponse = await fetch(
         `${SUPABASE_URL}/functions/v1/elevenlabs-create-agent`,
         {
@@ -79,6 +79,7 @@ serve(async (req) => {
             Authorization: authHeader,
             "Content-Type": "application/json",
           },
+          body: JSON.stringify({}),
         }
       );
 
