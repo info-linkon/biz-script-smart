@@ -7,6 +7,7 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { toast } from 'sonner';
 import { Mic, Loader2 } from 'lucide-react';
+import { supabase } from '@/integrations/supabase/client';
 
 export default function Login() {
   const [email, setEmail] = useState('');
@@ -25,8 +26,31 @@ export default function Login() {
       toast.error('שגיאה בהתחברות', {
         description: 'אימייל או סיסמה שגויים',
       });
-    } else {
-      toast.success('התחברת בהצלחה!');
+      setLoading(false);
+      return;
+    }
+
+    // Check if user has completed onboarding
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('elevenlabs_agent_id, business_name')
+          .eq('user_id', user.id)
+          .single();
+
+        toast.success('התחברת בהצלחה!');
+        
+        // If no agent ID or no business name, redirect to onboarding
+        if (!profile?.elevenlabs_agent_id || !profile?.business_name) {
+          navigate('/onboarding');
+        } else {
+          navigate('/dashboard');
+        }
+      }
+    } catch (err) {
+      // On error, just go to dashboard
       navigate('/dashboard');
     }
     
