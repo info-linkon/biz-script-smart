@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
@@ -43,6 +44,7 @@ export default function Calls() {
   const [calls, setCalls] = useState<Call[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+  const [languageFilter, setLanguageFilter] = useState<string>('all');
   const [selectedCall, setSelectedCall] = useState<Call | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
 
@@ -78,11 +80,13 @@ export default function Calls() {
 
   const filteredCalls = calls.filter(call => {
     const query = searchQuery.toLowerCase();
-    return (
+    const matchesSearch = (
       call.caller_name?.toLowerCase().includes(query) ||
       call.caller_phone?.includes(query) ||
       call.summary?.toLowerCase().includes(query)
     );
+    const matchesLanguage = languageFilter === 'all' || call.language === languageFilter;
+    return matchesSearch && matchesLanguage;
   });
 
   const formatDuration = (seconds: number | null) => {
@@ -106,14 +110,27 @@ export default function Calls() {
             <h1 className="text-2xl lg:text-3xl font-bold">היסטוריית שיחות</h1>
             <p className="text-muted-foreground">כל השיחות והצ'אטים עם לקוחות</p>
           </div>
-          <div className="relative">
-            <Search className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input
-              placeholder="חיפוש לפי שם, טלפון או תוכן..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="pr-10 w-full sm:w-64"
-            />
+          <div className="flex items-center gap-3">
+            <Select value={languageFilter} onValueChange={setLanguageFilter}>
+              <SelectTrigger className="w-[140px]">
+                <SelectValue placeholder="כל השפות" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">🌐 כל השפות</SelectItem>
+                <SelectItem value="he">🇮🇱 עברית</SelectItem>
+                <SelectItem value="ar">🇸🇦 ערבית</SelectItem>
+                <SelectItem value="en">🇺🇸 English</SelectItem>
+              </SelectContent>
+            </Select>
+            <div className="relative">
+              <Search className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="חיפוש לפי שם, טלפון או תוכן..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pr-10 w-full sm:w-64"
+              />
+            </div>
           </div>
         </div>
 
