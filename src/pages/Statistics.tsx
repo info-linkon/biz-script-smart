@@ -1,9 +1,13 @@
 import { useEffect, useState } from 'react';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Calendar as CalendarComponent } from '@/components/ui/calendar';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
+import { cn } from '@/lib/utils';
 import { 
   Phone, 
   Clock, 
@@ -11,12 +15,13 @@ import {
   Languages, 
   Calendar,
   CheckCircle,
-  XCircle,
   Timer,
-  Loader2
+  Loader2,
+  CalendarIcon
 } from 'lucide-react';
-import { format, subDays, startOfDay, endOfDay } from 'date-fns';
+import { format, subDays, differenceInDays, eachDayOfInterval } from 'date-fns';
 import { he } from 'date-fns/locale';
+import { DateRange } from 'react-day-picker';
 import {
   LineChart,
   Line,
@@ -30,7 +35,6 @@ import {
   Cell,
   BarChart,
   Bar,
-  Legend
 } from 'recharts';
 
 const LANGUAGE_LABELS: Record<string, { label: string; flag: string; color: string }> = {
@@ -74,6 +78,10 @@ export default function Statistics() {
   const [dailyData, setDailyData] = useState<DailyCallData[]>([]);
   const [languageData, setLanguageData] = useState<LanguageData[]>([]);
   const [hourlyData, setHourlyData] = useState<HourlyData[]>([]);
+  const [dateRange, setDateRange] = useState<DateRange | undefined>({
+    from: subDays(new Date(), 30),
+    to: new Date(),
+  });
   const [stats, setStats] = useState({
     totalCalls: 0,
     completedCalls: 0,
@@ -84,19 +92,22 @@ export default function Statistics() {
   });
 
   useEffect(() => {
-    if (user) {
+    if (user && dateRange?.from && dateRange?.to) {
       fetchStatistics();
     }
-  }, [user]);
+  }, [user, dateRange]);
 
   const fetchStatistics = async () => {
+    if (!dateRange?.from || !dateRange?.to) return;
+    
     try {
-      const thirtyDaysAgo = subDays(new Date(), 30);
+      setLoading(true);
       
       const { data, error } = await supabase
         .from('calls')
         .select('*')
-        .gte('created_at', thirtyDaysAgo.toISOString())
+        .gte('created_at', dateRange.from.toISOString())
+        .lte('created_at', dateRange.to.toISOString())
         .order('created_at', { ascending: true });
 
       if (error) throw error;
@@ -114,6 +125,8 @@ export default function Statistics() {
   };
 
   const processStatistics = (callsData: Call[]) => {
+    if (!dateRange?.from || !dateRange?.to) return;
+    
     // Basic stats
     const totalCalls = callsData.length;
     const completedCalls = callsData.filter(c => c.status === 'completed').length;
@@ -121,12 +134,14 @@ export default function Statistics() {
     const avgDuration = totalCalls > 0 ? Math.round(totalDuration / totalCalls) : 0;
     const successRate = totalCalls > 0 ? Math.round((completedCalls / totalCalls) * 100) : 0;
 
-    // Daily data for line chart
+    // Daily data for line chart based on selected range
     const dailyMap = new Map<string, { calls: number; totalDuration: number }>();
-    for (let i = 29; i >= 0; i--) {
-      const date = format(subDays(new Date(), i), 'yyyy-MM-dd');
+    const days = eachDayOfInterval({ start: dateRange.from, end: dateRange.to });
+    
+    days.forEach(day => {
+      const date = format(day, 'yyyy-MM-dd');
       dailyMap.set(date, { calls: 0, totalDuration: 0 });
-    }
+    });
     
     callsData.forEach(call => {
       const date = format(new Date(call.created_at), 'yyyy-MM-dd');
@@ -222,13 +237,109 @@ export default function Statistics() {
     );
   }
 
+  const getDateRangeLabel = () => {
+    if (!dateRange?.from || !dateRange?.to) return 'בחר טווח תאריכים';
+    const days = differenceInDays(dateRange.to, dateRange.from) + 1;
+    return `${days} ימים`;
+  };
+
+  const handlePresetRange = (days: number) => {
+    setDateRange({
+      from: subDays(new Date(), days - 1),
+      to: new Date(),
+    });
+  };
+
   return (
     <AppLayout>
       <div className="space-y-6">
         {/* Header */}
-        <div>
-          <h1 className="text-2xl lg:text-3xl font-bold">סטטיסטיקות מתקדמות</h1>
-          <p className="text-muted-foreground">נתונים מ-30 הימים האחרונים</p>
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div>
+            <h1 className="text-2xl lg:text-3xl font-bold">סטטיסטיקות מתקדמות</h1>
+            <p className="text-muted-foreground">
+              {dateRange?.from && dateRange?.to 
+                ? `${format(dateRange.from, 'dd/MM/yyyy', { locale: he })} - ${format(dateRange.to, 'dd/MM/yyyy', { locale: he })}`
+                : 'בחר טווח תאריכים'
+              }
+            </p>
+          </div>
+          
+          <div className="flex items-center gap-2">
+            {/* Preset buttons */}
+            <div className="hidden sm:flex items-center gap-1">
+              <Button 
+                variant="outline" 
+                size="sm"
+                onClick={() => handlePresetRange(7)}
+                className={cn(
+                  dateRange?.from && differenceInDays(new Date(), dateRange.from) === 6 && 'bg-primary text-primary-foreground'
+                )}
+              >
+                7 ימים
+              </Button>
+              <Button 
+                variant="outline" 
+                size="sm"
+                onClick={() => handlePresetRange(30)}
+                className={cn(
+                  dateRange?.from && differenceInDays(new Date(), dateRange.from) === 29 && 'bg-primary text-primary-foreground'
+                )}
+              >
+                30 יום
+              </Button>
+              <Button 
+                variant="outline" 
+                size="sm"
+                onClick={() => handlePresetRange(90)}
+                className={cn(
+                  dateRange?.from && differenceInDays(new Date(), dateRange.from) === 89 && 'bg-primary text-primary-foreground'
+                )}
+              >
+                90 יום
+              </Button>
+            </div>
+            
+            {/* Date range picker */}
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button
+                  variant="outline"
+                  className={cn(
+                    "justify-start text-right font-normal",
+                    !dateRange && "text-muted-foreground"
+                  )}
+                >
+                  <CalendarIcon className="ml-2 h-4 w-4" />
+                  {dateRange?.from ? (
+                    dateRange.to ? (
+                      <>
+                        {format(dateRange.from, "dd/MM", { locale: he })} -{" "}
+                        {format(dateRange.to, "dd/MM", { locale: he })}
+                      </>
+                    ) : (
+                      format(dateRange.from, "dd/MM/yyyy", { locale: he })
+                    )
+                  ) : (
+                    <span>בחר טווח</span>
+                  )}
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-auto p-0" align="end">
+                <CalendarComponent
+                  initialFocus
+                  mode="range"
+                  defaultMonth={dateRange?.from}
+                  selected={dateRange}
+                  onSelect={setDateRange}
+                  numberOfMonths={2}
+                  locale={he}
+                  className={cn("p-3 pointer-events-auto")}
+                  disabled={(date) => date > new Date()}
+                />
+              </PopoverContent>
+            </Popover>
+          </div>
         </div>
 
         {/* KPI Cards */}
@@ -324,7 +435,7 @@ export default function Statistics() {
           <Card className="border-0 shadow-sm lg:col-span-2">
             <CardHeader>
               <CardTitle className="text-lg">שיחות לאורך זמן</CardTitle>
-              <CardDescription>30 הימים האחרונים</CardDescription>
+              <CardDescription>{getDateRangeLabel()}</CardDescription>
             </CardHeader>
             <CardContent>
               <div className="h-80">
