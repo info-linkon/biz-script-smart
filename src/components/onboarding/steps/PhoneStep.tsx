@@ -2,9 +2,10 @@ import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Phone, ArrowRight, Loader2, Check, Sparkles, ShoppingCart } from 'lucide-react';
+import { Phone, ArrowRight, Loader2, Check, Sparkles, ShoppingCart, Mic, Radio } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
+import { Label } from '@/components/ui/label';
 
 interface PhoneStepProps {
   onComplete: () => void;
@@ -19,6 +20,23 @@ const COUNTRIES = [
   { code: 'FR', name: 'צרפת', prefix: '+33', price: '$1.50/חודש' },
 ];
 
+const VOICE_PROVIDERS = [
+  { 
+    id: 'elevenlabs', 
+    name: 'ElevenLabs', 
+    description: 'איכות קול מעולה, תמיכה מלאה בעברית',
+    features: ['קול טבעי ואיכותי', 'זיהוי שפה אוטומטי', 'WebSocket בזמן אמת'],
+    recommended: true,
+  },
+  { 
+    id: 'vapi', 
+    name: 'Vapi.ai', 
+    description: 'פלטפורמה מתקדמת עם Deepgram STT',
+    features: ['Deepgram Nova-2 STT', 'GPT-4 LLM', 'זמן תגובה נמוך'],
+    recommended: false,
+  },
+];
+
 const SETUP_STEPS = [
   { id: 'search', label: 'מחפש מספרים זמינים...' },
   { id: 'purchase', label: 'רוכש מספר...' },
@@ -29,6 +47,7 @@ const SETUP_STEPS = [
 export function PhoneStep({ onComplete, onBack }: PhoneStepProps) {
   const [purchasing, setPurchasing] = useState(false);
   const [countryCode, setCountryCode] = useState('US');
+  const [voiceProvider, setVoiceProvider] = useState<'elevenlabs' | 'vapi'>('elevenlabs');
   const [currentStep, setCurrentStep] = useState(0);
   const [purchaseComplete, setPurchaseComplete] = useState(false);
   const [purchasedNumber, setPurchasedNumber] = useState('');
@@ -46,7 +65,10 @@ export function PhoneStep({ onComplete, onBack }: PhoneStepProps) {
       }, 1500);
 
       const { data, error } = await supabase.functions.invoke('twilio-complete-setup', {
-        body: { country_code: countryCode },
+        body: { 
+          country_code: countryCode,
+          voice_provider: voiceProvider,
+        },
       });
 
       clearInterval(stepInterval);
@@ -75,7 +97,10 @@ export function PhoneStep({ onComplete, onBack }: PhoneStepProps) {
   const handleSkip = async () => {
     setSkipping(true);
     try {
-      const { data, error } = await supabase.functions.invoke('elevenlabs-create-agent', {
+      // Create agent based on selected provider
+      const functionName = voiceProvider === 'vapi' ? 'vapi-create-assistant' : 'elevenlabs-create-agent';
+      
+      const { data, error } = await supabase.functions.invoke(functionName, {
         body: {},
       });
 
@@ -96,6 +121,7 @@ export function PhoneStep({ onComplete, onBack }: PhoneStepProps) {
   };
 
   if (purchaseComplete) {
+    const providerName = voiceProvider === 'vapi' ? 'Vapi.ai' : 'ElevenLabs';
     return (
       <Card className="border-0 shadow-lg">
         <CardContent className="py-12 text-center">
@@ -103,8 +129,11 @@ export function PhoneStep({ onComplete, onBack }: PhoneStepProps) {
             <Check className="h-10 w-10 text-primary" />
           </div>
           <h2 className="text-2xl font-bold mb-2">הסוכן הקולי שלך מוכן!</h2>
-          <p className="text-muted-foreground mb-4">
+          <p className="text-muted-foreground mb-2">
             המספר {purchasedNumber} מחובר לסוכן שלך
+          </p>
+          <p className="text-sm text-muted-foreground mb-4">
+            ספק: {providerName}
           </p>
           <div className="flex items-center justify-center gap-2 text-primary">
             <Sparkles className="h-5 w-5" />
@@ -124,7 +153,9 @@ export function PhoneStep({ onComplete, onBack }: PhoneStepProps) {
               <Loader2 className="h-8 w-8 text-primary animate-spin" />
             </div>
             <h2 className="text-xl font-bold mb-2">מגדיר את המספר שלך...</h2>
-            <p className="text-sm text-muted-foreground">זה ייקח כמה שניות</p>
+            <p className="text-sm text-muted-foreground">
+              יוצר סוכן {voiceProvider === 'vapi' ? 'Vapi.ai' : 'ElevenLabs'}
+            </p>
           </div>
 
           <div className="space-y-3 max-w-sm mx-auto">
@@ -176,36 +207,94 @@ export function PhoneStep({ onComplete, onBack }: PhoneStepProps) {
           </div>
           <CardTitle className="text-2xl">רכישת מספר טלפון</CardTitle>
           <CardDescription>
-            בחר מדינה והמערכת תקצה לך מספר ייעודי לעסק שלך
+            בחר ספק קול ומדינה למספר הטלפון שלך
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <label className="text-sm font-medium">בחר מדינה</label>
-              <Select value={countryCode} onValueChange={setCountryCode}>
-                <SelectTrigger>
-                  <SelectValue placeholder="בחר מדינה" />
-                </SelectTrigger>
-                <SelectContent>
-                  {COUNTRIES.map((country) => (
-                    <SelectItem key={country.code} value={country.code}>
-                      <div className="flex items-center justify-between gap-4 w-full">
-                        <span>{country.name} ({country.prefix})</span>
-                        <span className="text-muted-foreground text-xs">{country.price}</span>
+          {/* Voice Provider Selection */}
+          <div className="space-y-3">
+            <Label className="text-sm font-medium">בחר ספק קול</Label>
+            <div className="grid gap-3">
+              {VOICE_PROVIDERS.map((provider) => (
+                <Card 
+                  key={provider.id}
+                  className={`cursor-pointer transition-all ${
+                    voiceProvider === provider.id 
+                      ? 'border-2 border-primary bg-primary/5' 
+                      : 'border border-border hover:border-primary/40'
+                  }`}
+                  onClick={() => setVoiceProvider(provider.id as 'elevenlabs' | 'vapi')}
+                >
+                  <CardContent className="p-4">
+                    <div className="flex items-start gap-3">
+                      <div className={`h-10 w-10 rounded-lg flex items-center justify-center ${
+                        voiceProvider === provider.id ? 'bg-primary/20' : 'bg-muted'
+                      }`}>
+                        {provider.id === 'elevenlabs' ? (
+                          <Mic className={`h-5 w-5 ${voiceProvider === provider.id ? 'text-primary' : 'text-muted-foreground'}`} />
+                        ) : (
+                          <Radio className={`h-5 w-5 ${voiceProvider === provider.id ? 'text-primary' : 'text-muted-foreground'}`} />
+                        )}
                       </div>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2">
+                          <h4 className="font-semibold">{provider.name}</h4>
+                          {provider.recommended && (
+                            <span className="text-xs bg-primary/10 text-primary px-2 py-0.5 rounded-full">
+                              מומלץ
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-sm text-muted-foreground">{provider.description}</p>
+                        <div className="flex flex-wrap gap-1 mt-2">
+                          {provider.features.map((feature, i) => (
+                            <span key={i} className="text-xs bg-muted px-2 py-0.5 rounded">
+                              {feature}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                      <div className={`h-5 w-5 rounded-full border-2 flex items-center justify-center ${
+                        voiceProvider === provider.id 
+                          ? 'border-primary bg-primary' 
+                          : 'border-muted-foreground'
+                      }`}>
+                        {voiceProvider === provider.id && (
+                          <Check className="h-3 w-3 text-primary-foreground" />
+                        )}
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
             </div>
+          </div>
 
-            <div className="bg-muted/50 rounded-lg p-4 text-sm">
-              <p className="text-muted-foreground">
-                המספר יהיה פעיל מיד לאחר הרכישה וישויך לסוכן הקולי שלך.
-                תוכל לקבל שיחות נכנסות ללא הגדרות נוספות.
-              </p>
-            </div>
+          {/* Country Selection */}
+          <div className="space-y-2">
+            <Label className="text-sm font-medium">בחר מדינה</Label>
+            <Select value={countryCode} onValueChange={setCountryCode}>
+              <SelectTrigger>
+                <SelectValue placeholder="בחר מדינה" />
+              </SelectTrigger>
+              <SelectContent>
+                {COUNTRIES.map((country) => (
+                  <SelectItem key={country.code} value={country.code}>
+                    <div className="flex items-center justify-between gap-4 w-full">
+                      <span>{country.name} ({country.prefix})</span>
+                      <span className="text-muted-foreground text-xs">{country.price}</span>
+                    </div>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="bg-muted/50 rounded-lg p-4 text-sm">
+            <p className="text-muted-foreground">
+              המספר יהיה פעיל מיד לאחר הרכישה וישויך לסוכן {voiceProvider === 'vapi' ? 'Vapi.ai' : 'ElevenLabs'} שלך.
+              תוכל לקבל שיחות נכנסות ללא הגדרות נוספות.
+            </p>
           </div>
 
           <div className="flex gap-3 pt-4">
