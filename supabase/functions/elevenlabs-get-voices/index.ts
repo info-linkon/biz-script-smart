@@ -6,6 +6,27 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// Known multilingual voices that support Hebrew, Arabic, and other languages
+const MULTILINGUAL_VOICE_IDS = [
+  'iP95p4xoKVk53GoZ742B', // Chris
+  'JBFqnCBsd6RMkjVDRZzb', // George
+  'N2lVS1w4EtoT3dr4eOWO', // Callum
+  'XrExE9yKIg1WjnnlVkGX', // Matilda
+  'pFZP5JQG7iQjIQuC4Bku', // Lily
+  'onwK4e9ZLuTAKqWW03F9', // Daniel
+  'TX3LPaxmHKxFdv7VOQHJ', // Liam
+  'EXAVITQu4vr4xnSDxMaL', // Sarah
+  'CwhRBWXzGAHq8TQ4Fs17', // Roger
+  'FGY2WhTYpPnrIDTdsKH5', // Laura
+  'IKne3meq5aSn9XLyUdCD', // Charlie
+  'SAz9YHcvj6GT2YYXdXww', // River
+  'Xb7hH8MSUJpSbSDYk0k2', // Alice
+  'bIHbv24MWmeRgasZH58o', // Will
+  'cgSgspJ2msm6clMCkdW9', // Jessica
+  'cjVigY5qzO86Huf0OWal', // Eric
+  'nPczCjzI2devNBz1zQrb', // Brian
+];
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -83,46 +104,39 @@ serve(async (req) => {
     }));
 
     // Filter voices based on language compatibility
-    // Multilingual voices support Hebrew, Arabic, and English
-    // For Hebrew and Arabic, prioritize multilingual voices
-    // For English, all voices work but prioritize native English
+    // For Hebrew and Arabic, use known multilingual voices from the hardcoded list
+    // For English, include native English voices as well
     const filteredVoices = voices.filter((voice: any) => {
-      const accent = voice.labels?.accent?.toLowerCase() || '';
-      const name = voice.name.toLowerCase();
-      const isMultilingual = accent.includes('multilingual') || 
-                             name.includes('multilingual') ||
-                             accent.includes('international');
-      
-      // For Hebrew and Arabic, we need multilingual voices
+      // For Hebrew and Arabic, only return known multilingual voices
       if (language === 'he' || language === 'ar') {
-        return isMultilingual;
+        return MULTILINGUAL_VOICE_IDS.includes(voice.voice_id);
       }
       
       // For English, prefer native English voices but include multilingual too
       if (language === 'en') {
+        const accent = voice.labels?.accent?.toLowerCase() || '';
         const isEnglish = accent.includes('american') || 
                           accent.includes('british') || 
                           accent.includes('english') ||
                           accent.includes('australian') ||
                           accent.includes('irish') ||
                           accent.includes('scottish');
+        const isMultilingual = MULTILINGUAL_VOICE_IDS.includes(voice.voice_id);
         return isEnglish || isMultilingual;
       }
       
       return true;
     });
 
-    // Sort voices - multilingual first for Hebrew/Arabic, quality voices first for English
+    // Sort voices - multilingual (from our list) first for Hebrew/Arabic
     const sortedVoices = filteredVoices.sort((a: any, b: any) => {
-      const aMultilingual = a.labels?.accent?.toLowerCase()?.includes('multilingual') || 
-                            a.name.toLowerCase().includes('multilingual');
-      const bMultilingual = b.labels?.accent?.toLowerCase()?.includes('multilingual') || 
-                            b.name.toLowerCase().includes('multilingual');
+      const aIsKnown = MULTILINGUAL_VOICE_IDS.includes(a.voice_id);
+      const bIsKnown = MULTILINGUAL_VOICE_IDS.includes(b.voice_id);
       
-      // For Hebrew and Arabic, prioritize multilingual voices
+      // For Hebrew and Arabic, prioritize known multilingual voices
       if (language === 'he' || language === 'ar') {
-        if (aMultilingual && !bMultilingual) return -1;
-        if (!aMultilingual && bMultilingual) return 1;
+        if (aIsKnown && !bIsKnown) return -1;
+        if (!aIsKnown && bIsKnown) return 1;
       }
       
       // For English, sort by category (premade first)
