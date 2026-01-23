@@ -125,9 +125,12 @@ export function VoiceSelector({ selectedVoiceId, onSelect, compact = false, curr
           onValueChange={onSelect}
           className="grid grid-cols-2 gap-2"
         >
-          {voices.map((voice) => (
-            <div key={voice.voice_id} className="flex items-center space-x-2 space-x-reverse">
-              <RadioGroupItem value={voice.voice_id} id={voice.voice_id} />
+          {voices.map((voice, index) => (
+            <div 
+              key={voice.voice_id} 
+              className="flex items-center space-x-2 space-x-reverse animate-fade-in"
+              style={{ animationDelay: `${index * 50}ms`, animationFillMode: 'backwards' }}
+            >
               <Label 
                 htmlFor={voice.voice_id} 
                 className="flex-1 cursor-pointer text-sm"
@@ -180,16 +183,17 @@ export function VoiceSelector({ selectedVoiceId, onSelect, compact = false, curr
           onValueChange={onSelect}
           className="grid gap-3"
         >
-          {voices.map((voice) => (
+          {voices.map((voice, index) => (
             <div 
               key={voice.voice_id} 
-              className={`flex items-center justify-between p-3 rounded-lg border transition-all ${
+              className={`flex items-center justify-between p-3 rounded-lg border transition-all animate-fade-in ${
                 playingId === voice.voice_id
                   ? 'border-primary bg-primary/10 shadow-md'
                   : selectedVoiceId === voice.voice_id 
                     ? 'border-primary bg-primary/5' 
                     : 'border-border hover:border-primary/50'
               }`}
+              style={{ animationDelay: `${index * 75}ms`, animationFillMode: 'backwards' }}
             >
               <div className="flex items-center gap-3">
                 <RadioGroupItem value={voice.voice_id} id={`voice-${voice.voice_id}`} />
