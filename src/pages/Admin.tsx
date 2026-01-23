@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
+import { useUserRole } from '@/hooks/useUserRole';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -57,6 +58,7 @@ interface Stats {
 
 const Admin = () => {
   const { user } = useAuth();
+  const { isAdmin, loading: roleLoading } = useUserRole();
   const navigate = useNavigate();
   const [users, setUsers] = useState<User[]>([]);
   const [plans, setPlans] = useState<Plan[]>([]);
@@ -68,33 +70,20 @@ const Admin = () => {
     monthlyRevenue: 0
   });
   const [loading, setLoading] = useState(true);
-  const [isAdmin, setIsAdmin] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [editingPlan, setEditingPlan] = useState<Plan | null>(null);
   const [showPlanDialog, setShowPlanDialog] = useState(false);
 
   useEffect(() => {
-    checkAdminStatus();
-  }, [user]);
-
-  const checkAdminStatus = async () => {
-    if (!user) return;
-
-    const { data, error } = await supabase
-      .from('profiles')
-      .select('is_admin')
-      .eq('id', user.id)
-      .single();
-
-    if (error || !data?.is_admin) {
-      toast.error('אין לך הרשאות מנהל');
-      navigate('/dashboard');
-      return;
+    if (!roleLoading) {
+      if (!isAdmin) {
+        toast.error('אין לך הרשאות מנהל');
+        navigate('/dashboard');
+      } else {
+        fetchData();
+      }
     }
-
-    setIsAdmin(true);
-    fetchData();
-  };
+  }, [isAdmin, roleLoading, navigate]);
 
   const fetchData = async () => {
     await Promise.all([
@@ -106,35 +95,54 @@ const Admin = () => {
   };
 
   const fetchUsers = async () => {
-    const { data, error } = await supabase
+    // Fetch profiles
+    const { data: profilesData, error: profilesError } = await supabase
       .from('profiles')
       .select(`
         id,
         user_id,
         business_name,
         phone,
-        is_admin,
         subscription_status,
         subscription_plan_id,
         created_at
       `)
       .order('created_at', { ascending: false });
 
-    if (!error && data) {
-      // Fetch plan names
-      const { data: plansData } = await supabase
-        .from('subscription_plans')
-        .select('id, name_he');
-      
-      const planMap = new Map(plansData?.map(p => [p.id, p.name_he]) || []);
-      
-      const usersWithPlans = data.map(u => ({
-        ...u,
-        plan_name: u.subscription_plan_id ? planMap.get(u.subscription_plan_id) : 'ללא תוכנית'
-      }));
-      
-      setUsers(usersWithPlans as User[]);
+    if (profilesError) {
+      console.error('Error fetching profiles:', profilesError);
+      return;
     }
+
+    // Fetch user roles to determine admins
+    const { data: rolesData } = await supabase
+      .from('user_roles')
+      .select('user_id, role');
+
+    const adminUserIds = new Set(
+      rolesData?.filter(r => r.role === 'admin').map(r => r.user_id) || []
+    );
+
+    // Fetch plan names
+    const { data: plansData } = await supabase
+      .from('subscription_plans')
+      .select('id, name_he');
+    
+    const planMap = new Map(plansData?.map(p => [p.id, p.name_he]) || []);
+    
+    const usersWithPlans: User[] = (profilesData || []).map(u => ({
+      id: u.id,
+      user_id: u.user_id,
+      business_name: u.business_name,
+      phone: u.phone,
+      subscription_status: u.subscription_status,
+      subscription_plan_id: u.subscription_plan_id,
+      created_at: u.created_at,
+      is_admin: adminUserIds.has(u.user_id),
+      plan_name: u.subscription_plan_id ? planMap.get(u.subscription_plan_id) : 'ללא תוכנית'
+    }));
+    
+    setUsers(usersWithPlans);
   };
 
   const fetchPlans = async () => {
@@ -220,17 +228,38 @@ const Admin = () => {
     }
   };
 
-  const handleToggleAdmin = async (userId: string, currentStatus: boolean) => {
-    const { error } = await supabase
-      .from('profiles')
-      .update({ is_admin: !currentStatus })
-      .eq('id', userId);
+  const handleToggleAdmin = async (userId: string | null, currentIsAdmin: boolean) => {
+    if (!userId) {
+      toast.error('משתמש לא חוקי');
+      return;
+    }
 
-    if (error) {
-      toast.error('שגיאה בעדכון ההרשאות');
+    if (currentIsAdmin) {
+      // Remove admin role
+      const { error } = await supabase
+        .from('user_roles')
+        .delete()
+        .eq('user_id', userId)
+        .eq('role', 'admin');
+
+      if (error) {
+        toast.error('שגיאה בהסרת הרשאות מנהל');
+      } else {
+        toast.success('הרשאות המנהל הוסרו בהצלחה');
+        fetchUsers();
+      }
     } else {
-      toast.success('ההרשאות עודכנו בהצלחה');
-      fetchUsers();
+      // Add admin role
+      const { error } = await supabase
+        .from('user_roles')
+        .insert({ user_id: userId, role: 'admin' });
+
+      if (error) {
+        toast.error('שגיאה בהוספת הרשאות מנהל');
+      } else {
+        toast.success('הרשאות מנהל נוספו בהצלחה');
+        fetchUsers();
+      }
     }
   };
 
@@ -239,7 +268,7 @@ const Admin = () => {
     u.phone?.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  if (loading) {
+  if (loading || roleLoading) {
     return (
       <AppLayout>
         <div className="flex items-center justify-center h-96">
@@ -440,8 +469,8 @@ const Admin = () => {
                       <Button
                         variant="ghost"
                         size="sm"
-                        onClick={() => handleToggleAdmin(u.id, u.is_admin)}
-                        disabled={u.id === user?.id}
+                        onClick={() => handleToggleAdmin(u.user_id, u.is_admin)}
+                        disabled={u.user_id === user?.id}
                       >
                         {u.is_admin ? 'הסר מנהל' : 'הפוך למנהל'}
                       </Button>
