@@ -20,3 +20,6 @@ verify_jwt = false
 
 [functions.elevenlabs-get-voices]
 verify_jwt = false
+
+[functions.elevenlabs-import-number]
+verify_jwt = false
