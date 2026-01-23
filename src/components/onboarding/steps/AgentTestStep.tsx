@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { useConversation } from '@elevenlabs/react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -16,6 +16,186 @@ interface Message {
   role: 'user' | 'agent';
   text: string;
   timestamp: Date;
+}
+
+// Audio Visualizer Component
+function AudioVisualizer({ 
+  isActive, 
+  type,
+  getVolume 
+}: { 
+  isActive: boolean; 
+  type: 'input' | 'output';
+  getVolume: () => number;
+}) {
+  const [levels, setLevels] = useState<number[]>(Array(12).fill(0));
+  const animationRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (!isActive) {
+      setLevels(Array(12).fill(0));
+      if (animationRef.current) {
+        cancelAnimationFrame(animationRef.current);
+      }
+      return;
+    }
+
+    const updateLevels = () => {
+      const volume = getVolume();
+      
+      setLevels(prev => {
+        const newLevels = [...prev];
+        // Shift all levels to the left
+        for (let i = 0; i < newLevels.length - 1; i++) {
+          newLevels[i] = newLevels[i + 1];
+        }
+        // Add new level at the end with some randomization for visual interest
+        const normalizedVolume = Math.min(volume * 2, 1);
+        const variation = (Math.random() - 0.5) * 0.2;
+        newLevels[newLevels.length - 1] = Math.max(0.1, Math.min(1, normalizedVolume + variation));
+        return newLevels;
+      });
+
+      animationRef.current = requestAnimationFrame(updateLevels);
+    };
+
+    animationRef.current = requestAnimationFrame(updateLevels);
+
+    return () => {
+      if (animationRef.current) {
+        cancelAnimationFrame(animationRef.current);
+      }
+    };
+  }, [isActive, getVolume]);
+
+  const barColor = type === 'input' ? 'bg-green-500' : 'bg-primary';
+
+  return (
+    <div className="flex items-center justify-center gap-1 h-12">
+      {levels.map((level, i) => (
+        <div
+          key={i}
+          className={`w-1.5 rounded-full transition-all duration-75 ${barColor}`}
+          style={{
+            height: `${Math.max(4, level * 48)}px`,
+            opacity: isActive ? 0.7 + level * 0.3 : 0.2,
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
+// Circular Waveform Component
+function CircularWaveform({ 
+  isActive, 
+  isSpeaking,
+  getInputVolume,
+  getOutputVolume
+}: { 
+  isActive: boolean;
+  isSpeaking: boolean;
+  getInputVolume: () => number;
+  getOutputVolume: () => number;
+}) {
+  const [inputLevel, setInputLevel] = useState(0);
+  const [outputLevel, setOutputLevel] = useState(0);
+  const animationRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (!isActive) {
+      setInputLevel(0);
+      setOutputLevel(0);
+      if (animationRef.current) {
+        cancelAnimationFrame(animationRef.current);
+      }
+      return;
+    }
+
+    const updateLevels = () => {
+      const input = getInputVolume();
+      const output = getOutputVolume();
+      
+      setInputLevel(prev => prev * 0.8 + input * 0.2);
+      setOutputLevel(prev => prev * 0.8 + output * 0.2);
+
+      animationRef.current = requestAnimationFrame(updateLevels);
+    };
+
+    animationRef.current = requestAnimationFrame(updateLevels);
+
+    return () => {
+      if (animationRef.current) {
+        cancelAnimationFrame(animationRef.current);
+      }
+    };
+  }, [isActive, getInputVolume, getOutputVolume]);
+
+  const scale = 1 + (isSpeaking ? outputLevel : inputLevel) * 0.3;
+  const glowIntensity = isSpeaking ? outputLevel * 30 : inputLevel * 30;
+
+  return (
+    <div className="relative flex items-center justify-center">
+      {/* Outer glow ring */}
+      <div 
+        className={`absolute w-24 h-24 rounded-full transition-all duration-150 ${
+          isSpeaking ? 'bg-primary/20' : 'bg-green-500/20'
+        }`}
+        style={{
+          transform: `scale(${scale * 1.2})`,
+          filter: `blur(${glowIntensity}px)`,
+        }}
+      />
+      
+      {/* Middle ring */}
+      <div 
+        className={`absolute w-20 h-20 rounded-full border-2 transition-all duration-100 ${
+          isSpeaking 
+            ? 'border-primary/60' 
+            : 'border-green-500/60'
+        }`}
+        style={{
+          transform: `scale(${scale})`,
+        }}
+      />
+      
+      {/* Inner circle with icon */}
+      <div 
+        className={`relative w-16 h-16 rounded-full flex items-center justify-center transition-all duration-100 ${
+          isSpeaking 
+            ? 'bg-gradient-to-br from-primary to-accent shadow-lg shadow-primary/40' 
+            : 'bg-gradient-to-br from-green-500 to-green-600 shadow-lg shadow-green-500/40'
+        }`}
+        style={{
+          transform: `scale(${1 + (isSpeaking ? outputLevel : inputLevel) * 0.15})`,
+        }}
+      >
+        {isSpeaking ? (
+          <Volume2 className="h-7 w-7 text-white" />
+        ) : (
+          <Mic className="h-7 w-7 text-white" />
+        )}
+      </div>
+
+      {/* Ripple effect when speaking */}
+      {isActive && (
+        <>
+          <div 
+            className={`absolute w-16 h-16 rounded-full border transition-all ${
+              isSpeaking ? 'border-primary/40' : 'border-green-500/40'
+            } animate-ping`}
+            style={{ animationDuration: '1.5s' }}
+          />
+          <div 
+            className={`absolute w-16 h-16 rounded-full border transition-all ${
+              isSpeaking ? 'border-primary/20' : 'border-green-500/20'
+            } animate-ping`}
+            style={{ animationDuration: '2s', animationDelay: '0.5s' }}
+          />
+        </>
+      )}
+    </div>
+  );
 }
 
 export function AgentTestStep({ onComplete, onBack }: AgentTestStepProps) {
@@ -127,6 +307,23 @@ export function AgentTestStep({ onComplete, onBack }: AgentTestStepProps) {
   const isConnected = conversation.status === 'connected';
   const isSpeaking = conversation.isSpeaking;
 
+  // Volume getters with fallback
+  const getInputVolume = useCallback(() => {
+    try {
+      return conversation.getInputVolume?.() ?? 0;
+    } catch {
+      return 0;
+    }
+  }, [conversation]);
+
+  const getOutputVolume = useCallback(() => {
+    try {
+      return conversation.getOutputVolume?.() ?? 0;
+    } catch {
+      return 0;
+    }
+  }, [conversation]);
+
   return (
     <Card className="border-0 shadow-xl bg-card/80 backdrop-blur">
       <CardHeader className="text-center pb-2">
@@ -140,24 +337,58 @@ export function AgentTestStep({ onComplete, onBack }: AgentTestStepProps) {
       </CardHeader>
 
       <CardContent className="space-y-6">
-        {/* Connection Status */}
-        <div className="flex items-center justify-center gap-3 p-4 rounded-xl bg-muted/50">
-          <div className={`h-4 w-4 rounded-full transition-all ${
-            isConnected 
-              ? isSpeaking 
-                ? 'bg-accent animate-pulse shadow-lg shadow-accent/50' 
-                : 'bg-green-500 animate-pulse shadow-lg shadow-green-500/50'
-              : 'bg-muted-foreground/30'
-          }`} />
-          <span className="text-lg font-medium">
-            {isConnected 
-              ? isSpeaking 
-                ? '🎤 הסוכן מדבר...' 
-                : '👂 הסוכן מקשיב...'
-              : '⏸️ לא מחובר'
-            }
-          </span>
-        </div>
+        {/* Audio Visualizer */}
+        {isConnected && (
+          <div className="flex flex-col items-center gap-4 py-4">
+            <CircularWaveform
+              isActive={isConnected}
+              isSpeaking={isSpeaking}
+              getInputVolume={getInputVolume}
+              getOutputVolume={getOutputVolume}
+            />
+            <div className="flex items-center gap-2 text-sm font-medium">
+              <span className={`transition-colors ${!isSpeaking ? 'text-green-500' : 'text-muted-foreground'}`}>
+                🎙️ אתה
+              </span>
+              <span className="text-muted-foreground">|</span>
+              <span className={`transition-colors ${isSpeaking ? 'text-primary' : 'text-muted-foreground'}`}>
+                🤖 הסוכן
+              </span>
+            </div>
+            
+            {/* Audio Level Bars */}
+            <div className="w-full grid grid-cols-2 gap-4 mt-2">
+              <div className="space-y-1">
+                <p className="text-xs text-center text-muted-foreground">המיקרופון שלך</p>
+                <div className="bg-muted/50 rounded-lg p-2">
+                  <AudioVisualizer 
+                    isActive={isConnected && !isSpeaking} 
+                    type="input"
+                    getVolume={getInputVolume}
+                  />
+                </div>
+              </div>
+              <div className="space-y-1">
+                <p className="text-xs text-center text-muted-foreground">קול הסוכן</p>
+                <div className="bg-muted/50 rounded-lg p-2">
+                  <AudioVisualizer 
+                    isActive={isConnected && isSpeaking} 
+                    type="output"
+                    getVolume={getOutputVolume}
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Connection Status - only show when not connected */}
+        {!isConnected && (
+          <div className="flex items-center justify-center gap-3 p-4 rounded-xl bg-muted/50">
+            <div className="h-4 w-4 rounded-full bg-muted-foreground/30" />
+            <span className="text-lg font-medium">⏸️ לא מחובר</span>
+          </div>
+        )}
 
         {/* Language Tips */}
         <div className="flex items-center gap-2 p-3 rounded-lg bg-primary/10 text-sm">
@@ -170,7 +401,7 @@ export function AgentTestStep({ onComplete, onBack }: AgentTestStepProps) {
           <div className="p-3 border-b bg-muted/50 rounded-t-xl">
             <span className="font-medium text-sm">תמלול השיחה</span>
           </div>
-          <ScrollArea className="h-64 p-4">
+          <ScrollArea className="h-48 p-4">
             {messages.length === 0 ? (
               <div className="h-full flex items-center justify-center text-muted-foreground">
                 {isConnected 
