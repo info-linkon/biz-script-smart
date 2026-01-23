@@ -197,6 +197,32 @@ serve(async (req) => {
                       }
                     ]
                   }
+                },
+                {
+                  type: "webhook",
+                  name: "get_availability",
+                  description: "Get business availability and open hours. Use this when the customer asks about available times, business hours, or when they can schedule an appointment.",
+                  api_schema: {
+                    url: `${SUPABASE_URL}/functions/v1/elevenlabs-get-availability`,
+                    method: "POST",
+                    request_body_schema: {
+                      type: "object",
+                      properties: {
+                        date: {
+                          type: "string",
+                          description: "Optional: specific date to check availability (YYYY-MM-DD format)"
+                        }
+                      },
+                      required: []
+                    },
+                    request_headers: [
+                      {
+                        type: "value",
+                        name: "Content-Type",
+                        value: "application/json"
+                      }
+                    ]
+                  }
                 }
               ]
             },
