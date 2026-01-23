@@ -23,3 +23,6 @@ verify_jwt = false
 
 [functions.elevenlabs-import-number]
 verify_jwt = false
+
+[functions.twilio-complete-setup]
+verify_jwt = false

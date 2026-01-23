@@ -1,11 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Phone, ArrowRight, Loader2, Check, Sparkles, ExternalLink } from 'lucide-react';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Phone, ArrowRight, Loader2, Check, Sparkles, ShoppingCart } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
-import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 
 interface PhoneStepProps {
@@ -13,94 +11,78 @@ interface PhoneStepProps {
   onBack: () => void;
 }
 
+const COUNTRIES = [
+  { code: 'US', name: 'ארה"ב', prefix: '+1', price: '$1.15/חודש' },
+  { code: 'GB', name: 'בריטניה', prefix: '+44', price: '$1.50/חודש' },
+  { code: 'IL', name: 'ישראל', prefix: '+972', price: '$6.00/חודש' },
+  { code: 'DE', name: 'גרמניה', prefix: '+49', price: '$1.50/חודש' },
+  { code: 'FR', name: 'צרפת', prefix: '+33', price: '$1.50/חודש' },
+];
+
+const SETUP_STEPS = [
+  { id: 'search', label: 'מחפש מספרים זמינים...' },
+  { id: 'purchase', label: 'רוכש מספר...' },
+  { id: 'agent', label: 'מגדיר סוכן קולי...' },
+  { id: 'connect', label: 'מחבר מספר לסוכן...' },
+];
+
 export function PhoneStep({ onComplete, onBack }: PhoneStepProps) {
-  const { user } = useAuth();
-  const [importing, setImporting] = useState(false);
-  const [phoneNumber, setPhoneNumber] = useState('');
-  const [twilioAccountSid, setTwilioAccountSid] = useState('');
-  const [twilioAuthToken, setTwilioAuthToken] = useState('');
-  const [voiceId, setVoiceId] = useState<string | null>(null);
-  const [importComplete, setImportComplete] = useState(false);
+  const [purchasing, setPurchasing] = useState(false);
+  const [countryCode, setCountryCode] = useState('US');
+  const [currentStep, setCurrentStep] = useState(0);
+  const [purchaseComplete, setPurchaseComplete] = useState(false);
+  const [purchasedNumber, setPurchasedNumber] = useState('');
   const [skipMode, setSkipMode] = useState(false);
+  const [skipping, setSkipping] = useState(false);
 
-  useEffect(() => {
-    // Get voice_id from active script
-    const getVoiceId = async () => {
-      if (!user) return;
-      
-      const { data } = await supabase
-        .from('scripts')
-        .select('voice_id')
-        .eq('user_id', user.id)
-        .eq('is_active', true)
-        .maybeSingle();
-
-      if (data?.voice_id) {
-        setVoiceId(data.voice_id);
-      }
-    };
-
-    getVoiceId();
-  }, [user]);
-
-  const handleImport = async () => {
-    if (!phoneNumber || !twilioAccountSid || !twilioAuthToken) {
-      toast.error('יש למלא את כל השדות');
-      return;
-    }
-
-    if (!voiceId) {
-      toast.error('יש להגדיר קול בשלב הקודם');
-      return;
-    }
-
-    setImporting(true);
+  const handlePurchase = async () => {
+    setPurchasing(true);
+    setCurrentStep(0);
 
     try {
-      const { data, error } = await supabase.functions.invoke('elevenlabs-import-number', {
-        body: {
-          phone_number: phoneNumber,
-          twilio_account_sid: twilioAccountSid,
-          twilio_auth_token: twilioAuthToken,
-          voice_id: voiceId,
-        },
+      // Simulate step progress
+      const stepInterval = setInterval(() => {
+        setCurrentStep(prev => Math.min(prev + 1, SETUP_STEPS.length - 1));
+      }, 1500);
+
+      const { data, error } = await supabase.functions.invoke('twilio-complete-setup', {
+        body: { country_code: countryCode },
       });
+
+      clearInterval(stepInterval);
 
       if (error) throw error;
 
       if (data.success) {
-        setImportComplete(true);
-        toast.success('המספר יובא והסוכן הופעל בהצלחה!');
+        setPurchasedNumber(data.phone_number);
+        setPurchaseComplete(true);
+        toast.success('המספר נרכש והסוכן הופעל בהצלחה!');
         
-        // Wait a moment then complete
         setTimeout(() => {
           onComplete();
-        }, 2000);
+        }, 2500);
       } else {
-        throw new Error(data.error || 'Failed to import number');
+        throw new Error(data.error || 'Failed to complete setup');
       }
     } catch (error) {
-      console.error('Error importing number:', error);
-      toast.error('שגיאה בייבוא המספר');
+      console.error('Error purchasing number:', error);
+      toast.error('שגיאה ברכישת המספר. נסה שוב.');
     } finally {
-      setImporting(false);
+      setPurchasing(false);
     }
   };
 
   const handleSkip = async () => {
-    // Create agent without phone number
-    setImporting(true);
+    setSkipping(true);
     try {
       const { data, error } = await supabase.functions.invoke('elevenlabs-create-agent', {
-        body: {
-          voice_id: voiceId,
-        },
+        body: {},
       });
 
       if (error) throw error;
 
       if (data.success) {
-        toast.success('הסוכן נוצר בהצלחה! תוכל לחבר מספר טלפון בהמשך.');
+        toast.success('הסוכן נוצר בהצלחה! תוכל לרכוש מספר טלפון בהמשך.');
         onComplete();
       } else {
         throw new Error(data.error || 'Failed to create agent');
@@ -109,11 +91,11 @@ export function PhoneStep({ onComplete, onBack }: PhoneStepProps) {
       console.error('Error creating agent:', error);
       toast.error('שגיאה ביצירת הסוכן');
     } finally {
-      setImporting(false);
+      setSkipping(false);
     }
   };
 
-  if (importComplete) {
+  if (purchaseComplete) {
     return (
       <Card className="border-0 shadow-lg">
         <CardContent className="py-12 text-center">
@@ -122,11 +104,63 @@ export function PhoneStep({ onComplete, onBack }: PhoneStepProps) {
           </div>
           <h2 className="text-2xl font-bold mb-2">הסוכן הקולי שלך מוכן!</h2>
           <p className="text-muted-foreground mb-4">
-            המספר {phoneNumber} מחובר לסוכן שלך
+            המספר {purchasedNumber} מחובר לסוכן שלך
           </p>
           <div className="flex items-center justify-center gap-2 text-primary">
             <Sparkles className="h-5 w-5" />
             <span>מעביר אותך לדשבורד...</span>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (purchasing) {
+    return (
+      <Card className="border-0 shadow-lg">
+        <CardContent className="py-12">
+          <div className="text-center mb-8">
+            <div className="mx-auto mb-4 h-16 w-16 rounded-full bg-primary/10 flex items-center justify-center">
+              <Loader2 className="h-8 w-8 text-primary animate-spin" />
+            </div>
+            <h2 className="text-xl font-bold mb-2">מגדיר את המספר שלך...</h2>
+            <p className="text-sm text-muted-foreground">זה ייקח כמה שניות</p>
+          </div>
+
+          <div className="space-y-3 max-w-sm mx-auto">
+            {SETUP_STEPS.map((step, index) => (
+              <div 
+                key={step.id}
+                className={`flex items-center gap-3 p-3 rounded-lg transition-all ${
+                  index === currentStep 
+                    ? 'bg-primary/10 border border-primary/20' 
+                    : index < currentStep 
+                      ? 'bg-muted/50' 
+                      : 'opacity-50'
+                }`}
+              >
+                <div className={`h-6 w-6 rounded-full flex items-center justify-center text-sm ${
+                  index < currentStep 
+                    ? 'bg-primary text-primary-foreground' 
+                    : index === currentStep 
+                      ? 'bg-primary/20 text-primary' 
+                      : 'bg-muted text-muted-foreground'
+                }`}>
+                  {index < currentStep ? (
+                    <Check className="h-3 w-3" />
+                  ) : index === currentStep ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    index + 1
+                  )}
+                </div>
+                <span className={`text-sm ${
+                  index <= currentStep ? 'text-foreground' : 'text-muted-foreground'
+                }`}>
+                  {step.label}
+                </span>
+              </div>
+            ))}
           </div>
         </CardContent>
       </Card>
@@ -140,63 +174,37 @@ export function PhoneStep({ onComplete, onBack }: PhoneStepProps) {
           <div className="mx-auto mb-4 h-16 w-16 rounded-2xl bg-primary/10 flex items-center justify-center">
             <Phone className="h-8 w-8 text-primary" />
           </div>
-          <CardTitle className="text-2xl">חיבור מספר טלפון מ-Twilio</CardTitle>
+          <CardTitle className="text-2xl">רכישת מספר טלפון</CardTitle>
           <CardDescription>
-            חבר מספר טלפון קיים מחשבון Twilio שלך לסוכן הקולי
+            בחר מדינה והמערכת תקצה לך מספר ייעודי לעסק שלך
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
-          <div className="bg-muted/50 rounded-lg p-4 text-sm">
-            <p className="font-medium mb-2">איך להשיג את הפרטים?</p>
-            <ol className="list-decimal list-inside space-y-1 text-muted-foreground">
-              <li>היכנס לחשבון Twilio שלך</li>
-              <li>רכוש מספר טלפון (Phone Numbers → Buy a Number)</li>
-              <li>העתק את ה-Account SID וה-Auth Token מדף הקונסול</li>
-            </ol>
-            <a 
-              href="https://console.twilio.com" 
-              target="_blank" 
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 text-primary hover:underline mt-2"
-            >
-              <ExternalLink className="h-3 w-3" />
-              פתח Twilio Console
-            </a>
-          </div>
-
           <div className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="phoneNumber">מספר טלפון (בפורמט בינלאומי)</Label>
-              <Input
-                id="phoneNumber"
-                placeholder="+972501234567"
-                value={phoneNumber}
-                onChange={(e) => setPhoneNumber(e.target.value)}
-                dir="ltr"
-              />
+              <label className="text-sm font-medium">בחר מדינה</label>
+              <Select value={countryCode} onValueChange={setCountryCode}>
+                <SelectTrigger>
+                  <SelectValue placeholder="בחר מדינה" />
+                </SelectTrigger>
+                <SelectContent>
+                  {COUNTRIES.map((country) => (
+                    <SelectItem key={country.code} value={country.code}>
+                      <div className="flex items-center justify-between gap-4 w-full">
+                        <span>{country.name} ({country.prefix})</span>
+                        <span className="text-muted-foreground text-xs">{country.price}</span>
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="twilioSid">Twilio Account SID</Label>
-              <Input
-                id="twilioSid"
-                placeholder="AC..."
-                value={twilioAccountSid}
-                onChange={(e) => setTwilioAccountSid(e.target.value)}
-                dir="ltr"
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="twilioToken">Twilio Auth Token</Label>
-              <Input
-                id="twilioToken"
-                type="password"
-                placeholder="Auth Token"
-                value={twilioAuthToken}
-                onChange={(e) => setTwilioAuthToken(e.target.value)}
-                dir="ltr"
-              />
+            <div className="bg-muted/50 rounded-lg p-4 text-sm">
+              <p className="text-muted-foreground">
+                המספר יהיה פעיל מיד לאחר הרכישה וישויך לסוכן הקולי שלך.
+                תוכל לקבל שיחות נכנסות ללא הגדרות נוספות.
+              </p>
             </div>
           </div>
 
@@ -211,21 +219,12 @@ export function PhoneStep({ onComplete, onBack }: PhoneStepProps) {
               חזור
             </Button>
             <Button
-              onClick={handleImport}
+              onClick={handlePurchase}
               className="flex-1 gradient-primary text-white"
-              disabled={importing || !phoneNumber || !twilioAccountSid || !twilioAuthToken}
+              disabled={purchasing}
             >
-              {importing ? (
-                <>
-                  <Loader2 className="ml-2 h-4 w-4 animate-spin" />
-                  מייבא ומפעיל...
-                </>
-              ) : (
-                <>
-                  <Sparkles className="ml-2 h-4 w-4" />
-                  חבר והפעל סוכן
-                </>
-              )}
+              <ShoppingCart className="ml-2 h-4 w-4" />
+              רכוש מספר
             </Button>
           </div>
         </CardContent>
@@ -241,37 +240,47 @@ export function PhoneStep({ onComplete, onBack }: PhoneStepProps) {
         </div>
         <CardTitle className="text-2xl">חיבור מספר טלפון</CardTitle>
         <CardDescription>
-          חבר מספר טלפון לסוכן הקולי שלך
+          רכוש מספר טלפון ייעודי לסוכן הקולי שלך
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
         <div className="space-y-4">
-          <Card className="border-2 border-primary/20 bg-primary/5 cursor-pointer hover:border-primary/40 transition-colors" onClick={() => setSkipMode(true)}>
+          <Card 
+            className="border-2 border-primary/20 bg-primary/5 cursor-pointer hover:border-primary/40 transition-colors" 
+            onClick={() => setSkipMode(true)}
+          >
             <CardContent className="p-6">
               <div className="flex items-center gap-4">
                 <div className="h-12 w-12 rounded-xl bg-primary/20 flex items-center justify-center">
-                  <Phone className="h-6 w-6 text-primary" />
+                  <ShoppingCart className="h-6 w-6 text-primary" />
                 </div>
                 <div className="flex-1">
-                  <h3 className="font-semibold">חבר מספר מ-Twilio</h3>
+                  <h3 className="font-semibold">רכוש מספר טלפון</h3>
                   <p className="text-sm text-muted-foreground">
-                    יש לך מספר Twilio? חבר אותו לסוכן שלך
+                    קבל מספר ייעודי שיחובר אוטומטית לסוכן שלך
                   </p>
                 </div>
               </div>
             </CardContent>
           </Card>
 
-          <Card className="border border-border cursor-pointer hover:border-primary/40 transition-colors" onClick={handleSkip}>
+          <Card 
+            className="border border-border cursor-pointer hover:border-primary/40 transition-colors" 
+            onClick={handleSkip}
+          >
             <CardContent className="p-6">
               <div className="flex items-center gap-4">
                 <div className="h-12 w-12 rounded-xl bg-muted flex items-center justify-center">
-                  <Sparkles className="h-6 w-6 text-muted-foreground" />
+                  {skipping ? (
+                    <Loader2 className="h-6 w-6 text-muted-foreground animate-spin" />
+                  ) : (
+                    <Sparkles className="h-6 w-6 text-muted-foreground" />
+                  )}
                 </div>
                 <div className="flex-1">
                   <h3 className="font-semibold">המשך ללא מספר (לבינתיים)</h3>
                   <p className="text-sm text-muted-foreground">
-                    צור את הסוכן וחבר מספר בהמשך
+                    צור את הסוכן ורכוש מספר בהמשך
                   </p>
                 </div>
               </div>
@@ -292,7 +301,7 @@ export function PhoneStep({ onComplete, onBack }: PhoneStepProps) {
         </div>
 
         <p className="text-xs text-center text-muted-foreground">
-          לחיבור מספר תצטרך חשבון Twilio פעיל עם מספר טלפון.
+          המספרים מסופקים דרך Twilio. העלות נגבית חודשית.
         </p>
       </CardContent>
     </Card>
