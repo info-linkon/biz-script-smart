@@ -15,6 +15,7 @@ import Agent from "./pages/Agent";
 import Settings from "./pages/Settings";
 import Statistics from "./pages/Statistics";
 import Admin from "./pages/Admin";
+import Support from "./pages/Support";
 import NotFound from "./pages/NotFound";
 import Onboarding from "./pages/Onboarding";
 
@@ -69,6 +70,7 @@ const AppRoutes = () => (
     <Route path="/agent" element={<ProtectedRoute><Agent /></ProtectedRoute>} />
     <Route path="/statistics" element={<ProtectedRoute><Statistics /></ProtectedRoute>} />
     <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
+    <Route path="/support" element={<ProtectedRoute><Support /></ProtectedRoute>} />
     <Route path="/admin" element={<ProtectedRoute><Admin /></ProtectedRoute>} />
     <Route path="*" element={<NotFound />} />
   </Routes>

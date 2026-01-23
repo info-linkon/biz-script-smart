@@ -16,7 +16,8 @@ import {
   Menu,
   X,
   User,
-  Shield
+  Shield,
+  MessageSquare
 } from 'lucide-react';
 
 interface AppLayoutProps {
@@ -138,10 +139,17 @@ export function AppLayout({ children }: AppLayoutProps) {
               variant="ghost"
               size="sm"
               className="flex-1"
+              onClick={() => navigate('/support')}
+            >
+              <MessageSquare className="h-4 w-4 ml-2" />
+              תמיכה
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
               onClick={() => navigate('/settings')}
             >
-              <Settings className="h-4 w-4 ml-2" />
-              הגדרות
+              <Settings className="h-4 w-4" />
             </Button>
             <Button
               variant="ghost"
