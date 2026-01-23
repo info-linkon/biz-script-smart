@@ -18,6 +18,7 @@ import Admin from "./pages/Admin";
 import Support from "./pages/Support";
 import NotFound from "./pages/NotFound";
 import Onboarding from "./pages/Onboarding";
+import Availability from "./pages/Availability";
 
 const queryClient = new QueryClient();
 
@@ -66,6 +67,7 @@ const AppRoutes = () => (
     <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
     <Route path="/scripts" element={<ProtectedRoute><Scripts /></ProtectedRoute>} />
     <Route path="/calendar" element={<ProtectedRoute><CalendarPage /></ProtectedRoute>} />
+    <Route path="/availability" element={<ProtectedRoute><Availability /></ProtectedRoute>} />
     <Route path="/calls" element={<ProtectedRoute><Calls /></ProtectedRoute>} />
     <Route path="/agent" element={<ProtectedRoute><Agent /></ProtectedRoute>} />
     <Route path="/statistics" element={<ProtectedRoute><Statistics /></ProtectedRoute>} />
