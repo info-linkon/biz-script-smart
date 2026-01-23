@@ -7,7 +7,7 @@ import { Label } from '@/components/ui/label';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
-import { User, Building2, Phone, MapPin, Loader2, Save, Volume2 } from 'lucide-react';
+import { User, Building2, Phone, MapPin, Loader2, Save, Volume2, Play, Pause } from 'lucide-react';
 import { PhoneNumberManager } from '@/components/phone/PhoneNumberManager';
 import { VoiceSelector } from '@/components/phone/VoiceSelector';
 
@@ -32,7 +32,10 @@ export default function Settings() {
   const [saving, setSaving] = useState(false);
   const [selectedVoiceId, setSelectedVoiceId] = useState<string | null>(null);
   const [currentVoiceName, setCurrentVoiceName] = useState<string | null>(null);
+  const [currentVoicePreviewUrl, setCurrentVoicePreviewUrl] = useState<string | null>(null);
   const [savingVoice, setSavingVoice] = useState(false);
+  const [playingPreview, setPlayingPreview] = useState(false);
+  const [audioElement, setAudioElement] = useState<HTMLAudioElement | null>(null);
 
   useEffect(() => {
     if (user) {
@@ -80,17 +83,56 @@ export default function Settings() {
       if (script?.voice_id) {
         setSelectedVoiceId(script.voice_id);
         
-        // Fetch voice name from ElevenLabs
+        // Fetch voice name and preview URL from ElevenLabs
         const { data } = await supabase.functions.invoke('elevenlabs-get-voices');
         if (data?.success && data.voices) {
           const voice = data.voices.find((v: any) => v.voice_id === script.voice_id);
           if (voice) {
             setCurrentVoiceName(voice.name);
+            setCurrentVoicePreviewUrl(voice.preview_url || null);
           }
         }
       }
     } catch (error) {
       console.error('Error fetching current voice:', error);
+    }
+  };
+
+  const playCurrentVoicePreview = async () => {
+    if (!currentVoicePreviewUrl) {
+      toast.error('אין תצוגה מקדימה זמינה לקול זה');
+      return;
+    }
+
+    if (playingPreview) {
+      // Stop current playback
+      if (audioElement) {
+        audioElement.pause();
+        setAudioElement(null);
+      }
+      setPlayingPreview(false);
+      return;
+    }
+
+    try {
+      const audio = new Audio(currentVoicePreviewUrl);
+      audio.onended = () => {
+        setPlayingPreview(false);
+        setAudioElement(null);
+      };
+      audio.onerror = () => {
+        toast.error('שגיאה בהפעלת התצוגה המקדימה');
+        setPlayingPreview(false);
+        setAudioElement(null);
+      };
+      
+      setAudioElement(audio);
+      setPlayingPreview(true);
+      await audio.play();
+    } catch (error) {
+      console.error('Error playing preview:', error);
+      toast.error('שגיאה בהפעלת התצוגה המקדימה');
+      setPlayingPreview(false);
     }
   };
 
@@ -307,10 +349,32 @@ export default function Settings() {
               {/* Current Voice Display */}
               {currentVoiceName && (
                 <div className="mb-4 p-3 rounded-lg bg-primary/5 border border-primary/20">
-                  <div className="flex items-center gap-2">
-                    <Volume2 className="h-4 w-4 text-primary" />
-                    <span className="text-sm text-muted-foreground">קול נוכחי:</span>
-                    <span className="font-medium text-primary">{currentVoiceName}</span>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Volume2 className="h-4 w-4 text-primary" />
+                      <span className="text-sm text-muted-foreground">קול נוכחי:</span>
+                      <span className="font-medium text-primary">{currentVoiceName}</span>
+                    </div>
+                    {currentVoicePreviewUrl && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={playCurrentVoicePreview}
+                        className="h-8"
+                      >
+                        {playingPreview ? (
+                          <>
+                            <Pause className="ml-1 h-4 w-4" />
+                            עצור
+                          </>
+                        ) : (
+                          <>
+                            <Play className="ml-1 h-4 w-4" />
+                            האזן
+                          </>
+                        )}
+                      </Button>
+                    )}
                   </div>
                 </div>
               )}
