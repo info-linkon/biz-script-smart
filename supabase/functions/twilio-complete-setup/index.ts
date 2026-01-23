@@ -164,12 +164,15 @@ serve(async (req) => {
         const greetingMessage = script?.greeting_message || 
           `שלום! הגעתם ל${businessName}. איך אני יכול לעזור לכם?`;
 
+        // Hebrew and Arabic are not supported by nova-2, use "multi" for multilingual support
+        const transcriberLanguage = (language === "he" || language === "ar") ? "multi" : language;
+        
         const vapiPayload = {
           name: `Assistant - ${businessName}`,
           transcriber: {
             provider: "deepgram",
             model: "nova-2",
-            language: language === "he" ? "he" : language === "ar" ? "ar" : "en",
+            language: transcriberLanguage,
           },
           model: {
             provider: "openai",
