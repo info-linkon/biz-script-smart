@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from 'sonner';
 import { 
@@ -14,10 +15,12 @@ import {
   Eye,
   Shield,
   ShieldOff,
-  Mail,
   Phone,
   Building,
-  Calendar
+  Calendar,
+  Trash2,
+  UserX,
+  UserCheck
 } from 'lucide-react';
 
 interface User {
@@ -107,10 +110,60 @@ export function AdminUsers({ users, plans, currentUserId, onRefresh }: AdminUser
     }
   };
 
+  const handleToggleStatus = async (userId: string | null, currentStatus: string | null) => {
+    if (!userId) return;
+
+    const newStatus = currentStatus === 'active' ? 'inactive' : 'active';
+    
+    const { error } = await supabase
+      .from('profiles')
+      .update({ subscription_status: newStatus })
+      .eq('user_id', userId);
+
+    if (error) {
+      toast.error('שגיאה בעדכון הסטטוס');
+    } else {
+      toast.success(newStatus === 'active' ? 'המשתמש הופעל בהצלחה' : 'המשתמש הושבת בהצלחה');
+      onRefresh();
+    }
+  };
+
+  const handleDeleteUser = async (user: User) => {
+    if (!user.user_id) return;
+
+    try {
+      // Delete related data first
+      await supabase.from('user_roles').delete().eq('user_id', user.user_id);
+      await supabase.from('scripts').delete().eq('user_id', user.user_id);
+      await supabase.from('calls').delete().eq('user_id', user.user_id);
+      await supabase.from('appointments').delete().eq('user_id', user.user_id);
+      await supabase.from('availability').delete().eq('user_id', user.user_id);
+      await supabase.from('phone_numbers').delete().eq('user_id', user.user_id);
+      await supabase.from('usage_stats').delete().eq('user_id', user.user_id);
+      await supabase.from('support_tickets').delete().eq('user_id', user.user_id);
+      
+      // Delete profile
+      const { error } = await supabase
+        .from('profiles')
+        .delete()
+        .eq('user_id', user.user_id);
+
+      if (error) throw error;
+
+      toast.success('המשתמש נמחק בהצלחה');
+      onRefresh();
+    } catch (error) {
+      console.error('Error deleting user:', error);
+      toast.error('שגיאה במחיקת המשתמש');
+    }
+  };
+
   const filteredUsers = users.filter(u => {
-    const matchesSearch = 
+    // If no search query, show all users
+    const matchesSearch = !searchQuery || 
       u.business_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      u.phone?.toLowerCase().includes(searchQuery.toLowerCase());
+      u.phone?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      u.user_id?.toLowerCase().includes(searchQuery.toLowerCase());
     
     const matchesStatus = 
       statusFilter === 'all' ||
@@ -206,8 +259,22 @@ export function AdminUsers({ users, plans, currentUserId, onRefresh }: AdminUser
                           setSelectedUser(u);
                           setShowUserDialog(true);
                         }}
+                        title="צפייה בפרטים"
                       >
                         <Eye className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => handleToggleStatus(u.user_id, u.subscription_status)}
+                        disabled={u.user_id === currentUserId}
+                        title={u.subscription_status === 'active' ? 'השבת משתמש' : 'הפעל משתמש'}
+                      >
+                        {u.subscription_status === 'active' ? (
+                          <UserX className="h-4 w-4 text-orange-500" />
+                        ) : (
+                          <UserCheck className="h-4 w-4 text-green-500" />
+                        )}
                       </Button>
                       <Button
                         variant="ghost"
@@ -222,6 +289,37 @@ export function AdminUsers({ users, plans, currentUserId, onRefresh }: AdminUser
                           <Shield className="h-4 w-4" />
                         )}
                       </Button>
+                      <AlertDialog>
+                        <AlertDialogTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            disabled={u.user_id === currentUserId}
+                            title="מחק משתמש"
+                          >
+                            <Trash2 className="h-4 w-4 text-destructive" />
+                          </Button>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent dir="rtl">
+                          <AlertDialogHeader>
+                            <AlertDialogTitle>מחיקת משתמש</AlertDialogTitle>
+                            <AlertDialogDescription>
+                              האם אתה בטוח שברצונך למחוק את המשתמש "{u.business_name || 'ללא שם'}"?
+                              <br />
+                              <strong className="text-destructive">פעולה זו תמחק את כל הנתונים של המשתמש ולא ניתן לשחזר אותם!</strong>
+                            </AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter className="flex-row-reverse gap-2">
+                            <AlertDialogCancel>ביטול</AlertDialogCancel>
+                            <AlertDialogAction
+                              onClick={() => handleDeleteUser(u)}
+                              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                            >
+                              מחק לצמיתות
+                            </AlertDialogAction>
+                          </AlertDialogFooter>
+                        </AlertDialogContent>
+                      </AlertDialog>
                     </div>
                   </TableCell>
                 </TableRow>
