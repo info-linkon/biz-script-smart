@@ -128,7 +128,11 @@ export function VoiceSelector({ selectedVoiceId, onSelect, compact = false, curr
           {voices.map((voice, index) => (
             <div 
               key={voice.voice_id} 
-              className="flex items-center space-x-2 space-x-reverse animate-fade-in"
+              className={`flex items-center space-x-2 space-x-reverse animate-fade-in p-2 rounded-lg transition-all duration-200 cursor-pointer ${
+                playingId === voice.voice_id 
+                  ? 'bg-primary/10 shadow-md scale-[1.02]' 
+                  : 'hover:bg-muted/50 hover:shadow-sm hover:scale-[1.01]'
+              }`}
               style={{ animationDelay: `${index * 50}ms`, animationFillMode: 'backwards' }}
             >
               <Label 
@@ -186,12 +190,12 @@ export function VoiceSelector({ selectedVoiceId, onSelect, compact = false, curr
           {voices.map((voice, index) => (
             <div 
               key={voice.voice_id} 
-              className={`flex items-center justify-between p-3 rounded-lg border transition-all animate-fade-in ${
+              className={`flex items-center justify-between p-4 rounded-xl border transition-all duration-300 animate-fade-in cursor-pointer group ${
                 playingId === voice.voice_id
-                  ? 'border-primary bg-primary/10 shadow-md'
+                  ? 'border-primary bg-primary/10 shadow-lg scale-[1.02] ring-2 ring-primary/20'
                   : selectedVoiceId === voice.voice_id 
-                    ? 'border-primary bg-primary/5' 
-                    : 'border-border hover:border-primary/50'
+                    ? 'border-primary bg-primary/5 shadow-md' 
+                    : 'border-border hover:border-primary/50 hover:bg-muted/30 hover:shadow-lg hover:scale-[1.01] hover:-translate-y-0.5'
               }`}
               style={{ animationDelay: `${index * 75}ms`, animationFillMode: 'backwards' }}
             >
@@ -229,7 +233,11 @@ export function VoiceSelector({ selectedVoiceId, onSelect, compact = false, curr
                   type="button"
                   variant={playingId === voice.voice_id ? "default" : "outline"}
                   size="sm"
-                  className={`transition-all ${playingId === voice.voice_id ? 'bg-primary text-primary-foreground' : ''}`}
+                  className={`transition-all duration-200 ${
+                    playingId === voice.voice_id 
+                      ? 'bg-primary text-primary-foreground shadow-md' 
+                      : 'group-hover:bg-primary/10 group-hover:border-primary/50'
+                  }`}
                   onClick={(e) => {
                     e.preventDefault();
                     playPreview(voice);
