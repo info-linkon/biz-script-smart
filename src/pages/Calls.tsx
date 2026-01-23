@@ -9,9 +9,15 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
-import { Phone, MessageSquare, Search, Clock, User, Calendar, Loader2, FileText } from 'lucide-react';
+import { Phone, MessageSquare, Search, Clock, User, Calendar, Loader2, FileText, Languages } from 'lucide-react';
 import { format } from 'date-fns';
 import { he } from 'date-fns/locale';
+
+const LANGUAGE_LABELS: Record<string, { label: string; flag: string }> = {
+  he: { label: 'עברית', flag: '🇮🇱' },
+  ar: { label: 'ערבית', flag: '🇸🇦' },
+  en: { label: 'English', flag: '🇺🇸' },
+};
 
 interface TranscriptMessage {
   role: 'user' | 'assistant';
@@ -112,7 +118,7 @@ export default function Calls() {
         </div>
 
         {/* Stats */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
           <Card className="border-0 shadow-sm">
             <CardContent className="p-4">
               <div className="flex items-center gap-3">
@@ -120,7 +126,7 @@ export default function Calls() {
                   <Phone className="h-5 w-5 text-primary" />
                 </div>
                 <div>
-                  <p className="text-2xl font-bold">{calls.filter(c => c.call_type === 'voice').length}</p>
+                  <p className="text-2xl font-bold">{calls.filter(c => c.call_type === 'voice' || c.call_type === 'inbound').length}</p>
                   <p className="text-sm text-muted-foreground">שיחות קוליות</p>
                 </div>
               </div>
@@ -147,7 +153,7 @@ export default function Calls() {
                 </div>
                 <div>
                   <p className="text-2xl font-bold">{calls.filter(c => c.status === 'completed').length}</p>
-                  <p className="text-sm text-muted-foreground">שיחות שהושלמו</p>
+                  <p className="text-sm text-muted-foreground">הושלמו</p>
                 </div>
               </div>
             </CardContent>
@@ -166,6 +172,25 @@ export default function Calls() {
                     }
                   </p>
                   <p className="text-sm text-muted-foreground">זמן ממוצע</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          <Card className="border-0 shadow-sm">
+            <CardContent className="p-4">
+              <div className="flex items-center gap-3">
+                <div className="h-10 w-10 rounded-xl bg-blue-500/10 flex items-center justify-center">
+                  <Languages className="h-5 w-5 text-blue-600" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-1 text-lg font-bold">
+                    <span title="עברית">🇮🇱 {calls.filter(c => c.language === 'he').length}</span>
+                    <span className="text-muted-foreground mx-1">|</span>
+                    <span title="ערבית">🇸🇦 {calls.filter(c => c.language === 'ar').length}</span>
+                    <span className="text-muted-foreground mx-1">|</span>
+                    <span title="אנגלית">🇺🇸 {calls.filter(c => c.language === 'en').length}</span>
+                  </div>
+                  <p className="text-sm text-muted-foreground">שפות</p>
                 </div>
               </div>
             </CardContent>
@@ -217,18 +242,23 @@ export default function Calls() {
                       )}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <h3 className="font-medium truncate">
                           {call.caller_name || 'לקוח אנונימי'}
                         </h3>
                         <Badge variant="outline" className="text-xs">
-                          {call.call_type === 'voice' ? 'קולי' : 'צ\'אט'}
+                          {call.call_type === 'voice' || call.call_type === 'inbound' ? 'קולי' : 'צ\'אט'}
                         </Badge>
                         <Badge 
                           variant={call.status === 'completed' ? 'default' : 'secondary'}
                           className="text-xs"
                         >
-                          {call.status === 'completed' ? 'הושלם' : 'פעיל'}
+                          {call.status === 'completed' ? 'הושלם' : call.status === 'in_progress' ? 'פעיל' : call.status}
+                        </Badge>
+                        {/* Language Badge */}
+                        <Badge variant="outline" className="text-xs gap-1">
+                          <span>{LANGUAGE_LABELS[call.language]?.flag || '🌐'}</span>
+                          <span>{LANGUAGE_LABELS[call.language]?.label || call.language}</span>
                         </Badge>
                       </div>
                       <p className="text-sm text-muted-foreground truncate mt-1">
@@ -290,8 +320,9 @@ export default function Calls() {
                     </span>
                   </div>
                   <div className="flex items-center gap-2">
-                    <Badge variant="outline">
-                      {selectedCall.language === 'he' ? 'עברית' : 'אנגלית'}
+                    <Badge variant="outline" className="gap-1">
+                      <span>{LANGUAGE_LABELS[selectedCall.language]?.flag || '🌐'}</span>
+                      <span>{LANGUAGE_LABELS[selectedCall.language]?.label || selectedCall.language}</span>
                     </Badge>
                   </div>
                 </div>
