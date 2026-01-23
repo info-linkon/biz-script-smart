@@ -23,9 +23,10 @@ interface VoiceSelectorProps {
   onSelect: (voiceId: string) => void;
   compact?: boolean;
   currentVoiceName?: string | null;
+  language?: string;
 }
 
-export function VoiceSelector({ selectedVoiceId, onSelect, compact = false, currentVoiceName }: VoiceSelectorProps) {
+export function VoiceSelector({ selectedVoiceId, onSelect, compact = false, currentVoiceName, language = 'he' }: VoiceSelectorProps) {
   const [voices, setVoices] = useState<Voice[]>([]);
   const [loading, setLoading] = useState(true);
   const [playingId, setPlayingId] = useState<string | null>(null);
@@ -66,11 +67,14 @@ export function VoiceSelector({ selectedVoiceId, onSelect, compact = false, curr
         audioElement.pause();
       }
     };
-  }, []);
+  }, [language]); // Refetch when language changes
 
   const fetchVoices = async () => {
+    setLoading(true);
     try {
-      const { data, error } = await supabase.functions.invoke('elevenlabs-get-voices');
+      const { data, error } = await supabase.functions.invoke('elevenlabs-get-voices', {
+        body: { language }
+      });
 
       if (error) throw error;
       
@@ -200,6 +204,12 @@ export function VoiceSelector({ selectedVoiceId, onSelect, compact = false, curr
     );
   }
 
+  const languageLabel = {
+    he: 'עברית',
+    ar: 'ערבית',
+    en: 'אנגלית'
+  }[language] || language;
+
   return (
     <Card className="border-0 shadow-sm">
       <CardHeader>
@@ -208,7 +218,7 @@ export function VoiceSelector({ selectedVoiceId, onSelect, compact = false, curr
           קול הסוכן
         </CardTitle>
         <CardDescription>
-          בחר את הקול שבו הסוכן ידבר עם הלקוחות
+          קולות מותאמים ל{languageLabel} - כל הקולות תומכים בשפה שבחרת
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
