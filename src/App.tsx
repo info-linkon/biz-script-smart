@@ -13,6 +13,7 @@ import CalendarPage from "./pages/Calendar";
 import Calls from "./pages/Calls";
 import Agent from "./pages/Agent";
 import Settings from "./pages/Settings";
+import Statistics from "./pages/Statistics";
 import Admin from "./pages/Admin";
 import NotFound from "./pages/NotFound";
 import Onboarding from "./pages/Onboarding";
@@ -66,6 +67,7 @@ const AppRoutes = () => (
     <Route path="/calendar" element={<ProtectedRoute><CalendarPage /></ProtectedRoute>} />
     <Route path="/calls" element={<ProtectedRoute><Calls /></ProtectedRoute>} />
     <Route path="/agent" element={<ProtectedRoute><Agent /></ProtectedRoute>} />
+    <Route path="/statistics" element={<ProtectedRoute><Statistics /></ProtectedRoute>} />
     <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
     <Route path="/admin" element={<ProtectedRoute><Admin /></ProtectedRoute>} />
     <Route path="*" element={<NotFound />} />

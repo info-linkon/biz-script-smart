@@ -9,6 +9,7 @@ import {
   Calendar,
   Phone,
   Mic,
+  BarChart3,
   Settings,
   LogOut,
   Menu,
@@ -26,6 +27,7 @@ const navItems = [
   { href: '/calendar', label: 'יומן', icon: Calendar },
   { href: '/calls', label: 'שיחות', icon: Phone },
   { href: '/agent', label: 'סוכן AI', icon: Mic },
+  { href: '/statistics', label: 'סטטיסטיקות', icon: BarChart3 },
 ];
 
 export function AppLayout({ children }: AppLayoutProps) {
