@@ -21,11 +21,15 @@ import {
   Loader2,
   CalendarIcon,
   ArrowUpRight,
-  ArrowDownRight
+  ArrowDownRight,
+  AlertTriangle,
+  Bell,
+  X
 } from 'lucide-react';
 import { format, subDays, differenceInDays, eachDayOfInterval } from 'date-fns';
 import { he } from 'date-fns/locale';
 import { DateRange } from 'react-day-picker';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import {
   LineChart,
   Line,
@@ -101,6 +105,7 @@ export default function Statistics() {
     totalDuration: 0,
     successRate: 0,
   });
+  const [dismissedAlerts, setDismissedAlerts] = useState<string[]>([]);
 
   useEffect(() => {
     if (user && dateRange?.from && dateRange?.to) {
@@ -309,6 +314,117 @@ export default function Statistics() {
     );
   };
 
+  // Generate performance alerts
+  interface PerformanceAlert {
+    id: string;
+    type: 'warning' | 'critical';
+    title: string;
+    description: string;
+    metric: string;
+    change: number;
+  }
+
+  const generateAlerts = (): PerformanceAlert[] => {
+    const alerts: PerformanceAlert[] = [];
+    const THRESHOLD_WARNING = 20; // 20% drop
+    const THRESHOLD_CRITICAL = 50; // 50% drop
+
+    // Check total calls
+    if (previousStats.totalCalls > 0) {
+      const callsChange = ((stats.totalCalls - previousStats.totalCalls) / previousStats.totalCalls) * 100;
+      if (callsChange <= -THRESHOLD_CRITICAL) {
+        alerts.push({
+          id: 'calls-critical',
+          type: 'critical',
+          title: 'ירידה קריטית בכמות השיחות',
+          description: `כמות השיחות ירדה ב-${Math.abs(Math.round(callsChange))}% לעומת התקופה הקודמת`,
+          metric: 'calls',
+          change: callsChange,
+        });
+      } else if (callsChange <= -THRESHOLD_WARNING) {
+        alerts.push({
+          id: 'calls-warning',
+          type: 'warning',
+          title: 'ירידה בכמות השיחות',
+          description: `כמות השיחות ירדה ב-${Math.abs(Math.round(callsChange))}% לעומת התקופה הקודמת`,
+          metric: 'calls',
+          change: callsChange,
+        });
+      }
+    }
+
+    // Check success rate
+    if (previousStats.successRate > 0) {
+      const successChange = stats.successRate - previousStats.successRate;
+      if (successChange <= -THRESHOLD_CRITICAL / 2) { // More sensitive for success rate
+        alerts.push({
+          id: 'success-critical',
+          type: 'critical',
+          title: 'ירידה קריטית באחוז ההצלחה',
+          description: `אחוז ההצלחה ירד מ-${previousStats.successRate}% ל-${stats.successRate}%`,
+          metric: 'successRate',
+          change: successChange,
+        });
+      } else if (successChange <= -THRESHOLD_WARNING / 2) {
+        alerts.push({
+          id: 'success-warning',
+          type: 'warning',
+          title: 'ירידה באחוז ההצלחה',
+          description: `אחוז ההצלחה ירד מ-${previousStats.successRate}% ל-${stats.successRate}%`,
+          metric: 'successRate',
+          change: successChange,
+        });
+      }
+    }
+
+    // Check completed calls
+    if (previousStats.completedCalls > 0) {
+      const completedChange = ((stats.completedCalls - previousStats.completedCalls) / previousStats.completedCalls) * 100;
+      if (completedChange <= -THRESHOLD_CRITICAL) {
+        alerts.push({
+          id: 'completed-critical',
+          type: 'critical',
+          title: 'ירידה קריטית בשיחות שהושלמו',
+          description: `מספר השיחות שהושלמו ירד ב-${Math.abs(Math.round(completedChange))}%`,
+          metric: 'completed',
+          change: completedChange,
+        });
+      } else if (completedChange <= -THRESHOLD_WARNING) {
+        alerts.push({
+          id: 'completed-warning',
+          type: 'warning',
+          title: 'ירידה בשיחות שהושלמו',
+          description: `מספר השיחות שהושלמו ירד ב-${Math.abs(Math.round(completedChange))}%`,
+          metric: 'completed',
+          change: completedChange,
+        });
+      }
+    }
+
+    // Check average duration (significant increase might indicate issues)
+    if (previousStats.avgDuration > 0) {
+      const durationChange = ((stats.avgDuration - previousStats.avgDuration) / previousStats.avgDuration) * 100;
+      if (durationChange >= THRESHOLD_CRITICAL) {
+        alerts.push({
+          id: 'duration-warning',
+          type: 'warning',
+          title: 'עלייה משמעותית בזמן שיחה ממוצע',
+          description: `זמן השיחה הממוצע עלה ב-${Math.round(durationChange)}% - ייתכן שיש בעיות בתהליך`,
+          metric: 'duration',
+          change: durationChange,
+        });
+      }
+    }
+
+    return alerts;
+  };
+
+  const alerts = generateAlerts().filter(alert => !dismissedAlerts.includes(alert.id));
+
+  const dismissAlert = (alertId: string) => {
+    setDismissedAlerts(prev => [...prev, alertId]);
+  };
+
   if (loading) {
     return (
       <AppLayout>
@@ -424,7 +540,48 @@ export default function Statistics() {
           </div>
         </div>
 
-        {/* Comparison Info */}
+        {/* Performance Alerts */}
+        {alerts.length > 0 && (
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <Bell className="h-5 w-5 text-orange-500" />
+              <h2 className="font-semibold">התראות ביצועים</h2>
+              <span className="text-xs bg-orange-500/10 text-orange-600 px-2 py-0.5 rounded-full">
+                {alerts.length} התראות
+              </span>
+            </div>
+            {alerts.map((alert) => (
+              <Alert 
+                key={alert.id} 
+                variant={alert.type === 'critical' ? 'destructive' : 'default'}
+                className={cn(
+                  "relative",
+                  alert.type === 'warning' && "border-orange-500/50 bg-orange-500/5"
+                )}
+              >
+                <AlertTriangle className={cn(
+                  "h-4 w-4",
+                  alert.type === 'critical' ? "text-destructive" : "text-orange-500"
+                )} />
+                <AlertTitle className="flex items-center justify-between">
+                  <span>{alert.title}</span>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-6 w-6 absolute top-2 left-2"
+                    onClick={() => dismissAlert(alert.id)}
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                </AlertTitle>
+                <AlertDescription>
+                  {alert.description}
+                </AlertDescription>
+              </Alert>
+            ))}
+          </div>
+        )}
+
         <Card className="border-0 shadow-sm bg-secondary/30">
           <CardContent className="p-4">
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
