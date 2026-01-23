@@ -20,9 +20,10 @@ interface VoiceSelectorProps {
   selectedVoiceId: string | null;
   onSelect: (voiceId: string) => void;
   compact?: boolean;
+  currentVoiceName?: string | null;
 }
 
-export function VoiceSelector({ selectedVoiceId, onSelect, compact = false }: VoiceSelectorProps) {
+export function VoiceSelector({ selectedVoiceId, onSelect, compact = false, currentVoiceName }: VoiceSelectorProps) {
   const [voices, setVoices] = useState<Voice[]>([]);
   const [loading, setLoading] = useState(true);
   const [playingId, setPlayingId] = useState<string | null>(null);

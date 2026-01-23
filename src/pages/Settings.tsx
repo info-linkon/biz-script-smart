@@ -31,11 +31,13 @@ export default function Settings() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [selectedVoiceId, setSelectedVoiceId] = useState<string | null>(null);
+  const [currentVoiceName, setCurrentVoiceName] = useState<string | null>(null);
   const [savingVoice, setSavingVoice] = useState(false);
 
   useEffect(() => {
     if (user) {
       fetchProfile();
+      fetchCurrentVoice();
     }
   }, [user]);
 
@@ -65,6 +67,33 @@ export default function Settings() {
     }
   };
 
+  const fetchCurrentVoice = async () => {
+    try {
+      // Get user's active script with voice_id
+      const { data: script } = await supabase
+        .from('scripts')
+        .select('voice_id')
+        .eq('user_id', user!.id)
+        .eq('is_active', true)
+        .single();
+
+      if (script?.voice_id) {
+        setSelectedVoiceId(script.voice_id);
+        
+        // Fetch voice name from ElevenLabs
+        const { data } = await supabase.functions.invoke('elevenlabs-get-voices');
+        if (data?.success && data.voices) {
+          const voice = data.voices.find((v: any) => v.voice_id === script.voice_id);
+          if (voice) {
+            setCurrentVoiceName(voice.name);
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error fetching current voice:', error);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
@@ -91,7 +120,7 @@ export default function Settings() {
     }
   };
 
-  const handleVoiceChange = async (voiceId: string) => {
+  const handleVoiceChange = async (voiceId: string, voiceName?: string) => {
     setSelectedVoiceId(voiceId);
     
     if (!profile.elevenlabs_agent_id) {
@@ -118,6 +147,12 @@ export default function Settings() {
         return;
       }
 
+      // Update voice_id in the script
+      await supabase
+        .from('scripts')
+        .update({ voice_id: voiceId })
+        .eq('id', scriptId);
+
       // Call update agent with new voice
       const { data, error } = await supabase.functions.invoke('elevenlabs-update-agent', {
         body: { 
@@ -129,6 +164,19 @@ export default function Settings() {
       if (error) throw error;
 
       if (data?.success) {
+        // Update the displayed voice name
+        if (voiceName) {
+          setCurrentVoiceName(voiceName);
+        } else {
+          // Fetch voice name if not provided
+          const { data: voicesData } = await supabase.functions.invoke('elevenlabs-get-voices');
+          if (voicesData?.success && voicesData.voices) {
+            const voice = voicesData.voices.find((v: any) => v.voice_id === voiceId);
+            if (voice) {
+              setCurrentVoiceName(voice.name);
+            }
+          }
+        }
         toast.success('קול הסוכן עודכן בהצלחה');
       } else {
         throw new Error(data?.error || 'Failed to update voice');
@@ -256,6 +304,17 @@ export default function Settings() {
               </CardDescription>
             </CardHeader>
             <CardContent>
+              {/* Current Voice Display */}
+              {currentVoiceName && (
+                <div className="mb-4 p-3 rounded-lg bg-primary/5 border border-primary/20">
+                  <div className="flex items-center gap-2">
+                    <Volume2 className="h-4 w-4 text-primary" />
+                    <span className="text-sm text-muted-foreground">קול נוכחי:</span>
+                    <span className="font-medium text-primary">{currentVoiceName}</span>
+                  </div>
+                </div>
+              )}
+              
               {savingVoice && (
                 <div className="flex items-center gap-2 mb-4 text-sm text-muted-foreground">
                   <Loader2 className="h-4 w-4 animate-spin" />
@@ -264,7 +323,10 @@ export default function Settings() {
               )}
               <VoiceSelector 
                 selectedVoiceId={selectedVoiceId} 
-                onSelect={handleVoiceChange}
+                onSelect={(voiceId) => {
+                  handleVoiceChange(voiceId);
+                }}
+                currentVoiceName={currentVoiceName}
               />
             </CardContent>
           </Card>
