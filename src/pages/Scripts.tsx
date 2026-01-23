@@ -131,6 +131,8 @@ export default function Scripts() {
         greeting_message: greetingMessage.trim() || null,
       };
 
+      let savedScriptId: string | null = null;
+
       if (editingScript) {
         const { error } = await supabase
           .from('scripts')
@@ -138,14 +140,23 @@ export default function Scripts() {
           .eq('id', editingScript.id);
 
         if (error) throw error;
+        savedScriptId = editingScript.id;
         toast.success('התסריט עודכן בהצלחה');
       } else {
-        const { error } = await supabase
+        const { data, error } = await supabase
           .from('scripts')
-          .insert(scriptData);
+          .insert(scriptData)
+          .select('id')
+          .single();
 
         if (error) throw error;
+        savedScriptId = data?.id || null;
         toast.success('התסריט נוצר בהצלחה');
+      }
+
+      // Sync with ElevenLabs Agent if user has one
+      if (savedScriptId) {
+        await syncWithElevenLabs(savedScriptId);
       }
 
       setDialogOpen(false);
@@ -159,6 +170,31 @@ export default function Scripts() {
     }
   };
 
+  const syncWithElevenLabs = async (scriptId: string) => {
+    try {
+      const { data, error } = await supabase.functions.invoke('elevenlabs-update-agent', {
+        body: { script_id: scriptId }
+      });
+
+      if (error) {
+        console.error('ElevenLabs sync error:', error);
+        // Don't show error if user doesn't have an agent yet
+        return;
+      }
+
+      if (data?.success) {
+        toast.success('הסוכן עודכן בהצלחה ב-ElevenLabs');
+      } else if (data?.error?.includes('No agent found')) {
+        // User hasn't purchased a phone number yet, silent fail
+        console.log('No agent to sync with yet');
+      } else if (data?.error) {
+        console.error('ElevenLabs sync failed:', data.error);
+      }
+    } catch (err) {
+      console.error('Failed to sync with ElevenLabs:', err);
+    }
+  };
+
   const toggleActive = async (script: Script) => {
     try {
       const { error } = await supabase
@@ -169,6 +205,12 @@ export default function Scripts() {
       if (error) throw error;
       
       toast.success(script.is_active ? 'התסריט הושבת' : 'התסריט הופעל');
+      
+      // Sync with ElevenLabs if activating a script
+      if (!script.is_active) {
+        await syncWithElevenLabs(script.id);
+      }
+      
       fetchScripts();
     } catch (error) {
       console.error('Error toggling script:', error);
