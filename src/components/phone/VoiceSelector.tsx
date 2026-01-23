@@ -137,16 +137,20 @@ export function VoiceSelector({ selectedVoiceId, onSelect, compact = false, curr
               {voice.preview_url && (
                 <Button
                   type="button"
-                  variant="ghost"
+                  variant={playingId === voice.voice_id ? "default" : "ghost"}
                   size="icon"
-                  className="h-6 w-6"
+                  className={`h-6 w-6 transition-all ${playingId === voice.voice_id ? 'bg-primary' : ''}`}
                   onClick={(e) => {
                     e.preventDefault();
                     playPreview(voice);
                   }}
                 >
                   {playingId === voice.voice_id ? (
-                    <Pause className="h-3 w-3" />
+                    <div className="flex items-center gap-0.5">
+                      <div className="w-0.5 h-2 bg-primary-foreground rounded-full animate-audio-wave" style={{ animationDelay: '0ms' }} />
+                      <div className="w-0.5 h-3 bg-primary-foreground rounded-full animate-audio-wave" style={{ animationDelay: '150ms' }} />
+                      <div className="w-0.5 h-1.5 bg-primary-foreground rounded-full animate-audio-wave" style={{ animationDelay: '300ms' }} />
+                    </div>
                   ) : (
                     <Play className="h-3 w-3" />
                   )}
@@ -179,36 +183,49 @@ export function VoiceSelector({ selectedVoiceId, onSelect, compact = false, curr
           {voices.map((voice) => (
             <div 
               key={voice.voice_id} 
-              className={`flex items-center justify-between p-3 rounded-lg border transition-colors ${
-                selectedVoiceId === voice.voice_id 
-                  ? 'border-primary bg-primary/5' 
-                  : 'border-border hover:border-primary/50'
+              className={`flex items-center justify-between p-3 rounded-lg border transition-all ${
+                playingId === voice.voice_id
+                  ? 'border-primary bg-primary/10 shadow-md'
+                  : selectedVoiceId === voice.voice_id 
+                    ? 'border-primary bg-primary/5' 
+                    : 'border-border hover:border-primary/50'
               }`}
             >
               <div className="flex items-center gap-3">
                 <RadioGroupItem value={voice.voice_id} id={`voice-${voice.voice_id}`} />
-                <div>
-                  <Label 
-                    htmlFor={`voice-${voice.voice_id}`} 
-                    className="cursor-pointer font-medium"
-                  >
-                    {voice.name}
-                  </Label>
-                  {voice.description && (
-                    <p className="text-sm text-muted-foreground">{voice.description}</p>
+                <div className="flex items-center gap-2">
+                  {playingId === voice.voice_id && (
+                    <div className="flex items-center gap-0.5 h-4">
+                      <div className="w-1 h-3 bg-primary rounded-full animate-audio-wave" style={{ animationDelay: '0ms' }} />
+                      <div className="w-1 h-4 bg-primary rounded-full animate-audio-wave" style={{ animationDelay: '150ms' }} />
+                      <div className="w-1 h-2 bg-primary rounded-full animate-audio-wave" style={{ animationDelay: '300ms' }} />
+                      <div className="w-1 h-3 bg-primary rounded-full animate-audio-wave" style={{ animationDelay: '450ms' }} />
+                    </div>
                   )}
-                  {voice.labels?.accent && (
-                    <span className="text-xs text-muted-foreground">
-                      {voice.labels.accent}
-                    </span>
-                  )}
+                  <div>
+                    <Label 
+                      htmlFor={`voice-${voice.voice_id}`} 
+                      className={`cursor-pointer font-medium ${playingId === voice.voice_id ? 'animate-audio-pulse' : ''}`}
+                    >
+                      {voice.name}
+                    </Label>
+                    {voice.description && (
+                      <p className="text-sm text-muted-foreground">{voice.description}</p>
+                    )}
+                    {voice.labels?.accent && (
+                      <span className="text-xs text-muted-foreground">
+                        {voice.labels.accent}
+                      </span>
+                    )}
+                  </div>
                 </div>
               </div>
               {voice.preview_url && (
                 <Button
                   type="button"
-                  variant="outline"
+                  variant={playingId === voice.voice_id ? "default" : "outline"}
                   size="sm"
+                  className={`transition-all ${playingId === voice.voice_id ? 'bg-primary text-primary-foreground' : ''}`}
                   onClick={(e) => {
                     e.preventDefault();
                     playPreview(voice);
@@ -216,7 +233,11 @@ export function VoiceSelector({ selectedVoiceId, onSelect, compact = false, curr
                 >
                   {playingId === voice.voice_id ? (
                     <>
-                      <Pause className="ml-1 h-4 w-4" />
+                      <div className="flex items-center gap-0.5 ml-1">
+                        <div className="w-0.5 h-2 bg-primary-foreground rounded-full animate-audio-wave" style={{ animationDelay: '0ms' }} />
+                        <div className="w-0.5 h-3 bg-primary-foreground rounded-full animate-audio-wave" style={{ animationDelay: '150ms' }} />
+                        <div className="w-0.5 h-1.5 bg-primary-foreground rounded-full animate-audio-wave" style={{ animationDelay: '300ms' }} />
+                      </div>
                       עצור
                     </>
                   ) : (
