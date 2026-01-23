@@ -132,13 +132,9 @@ serve(async (req) => {
                     },
                     required: ["customer_name", "date", "time"]
                   },
-                  request_headers: [
-                    {
-                      type: "value",
-                      name: "Content-Type",
-                      value: "application/json"
-                    }
-                  ]
+                  request_headers: {
+                    "Content-Type": "application/json"
+                  }
                 }
               },
               {
@@ -158,13 +154,9 @@ serve(async (req) => {
                     },
                     required: []
                   },
-                  request_headers: [
-                    {
-                      type: "value",
-                      name: "Content-Type",
-                      value: "application/json"
-                    }
-                  ]
+                  request_headers: {
+                    "Content-Type": "application/json"
+                  }
                 }
               }
             ]
@@ -174,8 +166,8 @@ serve(async (req) => {
           supported_languages: ["he", "ar", "en"]
         },
         tts: {
-          voice_id: voice_id || script?.voice_id || "JBFqnCBsd6RMkjVDRZzb", // George - supports Hebrew/Arabic
-          model_id: "eleven_v3" // Upgraded: 74 languages including enhanced Hebrew support
+          voice_id: voice_id || script?.voice_id || "JBFqnCBsd6RMkjVDRZzb" // George - supports Hebrew/Arabic
+          // Note: model_id omitted - ElevenLabs will use default for the language
         }
       }
     };
