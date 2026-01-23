@@ -30,17 +30,33 @@ export default function Login() {
       return;
     }
 
-    // Check if user has completed onboarding
+    // Check if user is admin first, then check onboarding
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
+        // Check if user has admin role
+        const { data: roleData } = await supabase
+          .from('user_roles')
+          .select('role')
+          .eq('user_id', user.id)
+          .eq('role', 'admin')
+          .maybeSingle();
+
+        toast.success('התחברת בהצלחה!');
+
+        // Admin users go directly to admin panel
+        if (roleData) {
+          navigate('/admin');
+          setLoading(false);
+          return;
+        }
+
+        // Regular users - check onboarding
         const { data: profile } = await supabase
           .from('profiles')
           .select('elevenlabs_agent_id, business_name')
           .eq('user_id', user.id)
           .single();
-
-        toast.success('התחברת בהצלחה!');
         
         // If no agent ID or no business name, redirect to onboarding
         if (!profile?.elevenlabs_agent_id || !profile?.business_name) {
