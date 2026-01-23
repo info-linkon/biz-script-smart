@@ -7,9 +7,10 @@ import { Label } from '@/components/ui/label';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
-import { User, Building2, Phone, MapPin, Loader2, Save, Volume2, Play, Pause } from 'lucide-react';
+import { User, Building2, Phone, MapPin, Loader2, Save, Volume2, Play, Pause, Languages } from 'lucide-react';
 import { PhoneNumberManager } from '@/components/phone/PhoneNumberManager';
 import { VoiceSelector } from '@/components/phone/VoiceSelector';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 
 interface Profile {
   business_name: string | null;
@@ -31,11 +32,19 @@ export default function Settings() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [selectedVoiceId, setSelectedVoiceId] = useState<string | null>(null);
+  const [selectedLanguage, setSelectedLanguage] = useState<string>('he');
   const [currentVoiceName, setCurrentVoiceName] = useState<string | null>(null);
   const [currentVoicePreviewUrl, setCurrentVoicePreviewUrl] = useState<string | null>(null);
   const [savingVoice, setSavingVoice] = useState(false);
+  const [savingLanguage, setSavingLanguage] = useState(false);
   const [playingPreview, setPlayingPreview] = useState(false);
   const [audioElement, setAudioElement] = useState<HTMLAudioElement | null>(null);
+
+  const LANGUAGES = [
+    { code: 'he', name: 'עברית', flag: '🇮🇱' },
+    { code: 'ar', name: 'ערבית', flag: '🇸🇦' },
+    { code: 'en', name: 'English', flag: '🇺🇸' },
+  ];
 
   useEffect(() => {
     if (user) {
@@ -72,24 +81,32 @@ export default function Settings() {
 
   const fetchCurrentVoice = async () => {
     try {
-      // Get user's active script with voice_id
+      // Get user's active script with voice_id and language
       const { data: script } = await supabase
         .from('scripts')
-        .select('voice_id')
+        .select('voice_id, language')
         .eq('user_id', user!.id)
         .eq('is_active', true)
         .single();
 
-      if (script?.voice_id) {
-        setSelectedVoiceId(script.voice_id);
+      if (script) {
+        // Set language
+        if (script.language) {
+          setSelectedLanguage(script.language);
+        }
         
-        // Fetch voice name and preview URL from ElevenLabs
-        const { data } = await supabase.functions.invoke('elevenlabs-get-voices');
-        if (data?.success && data.voices) {
-          const voice = data.voices.find((v: any) => v.voice_id === script.voice_id);
-          if (voice) {
-            setCurrentVoiceName(voice.name);
-            setCurrentVoicePreviewUrl(voice.preview_url || null);
+        // Set voice
+        if (script.voice_id) {
+          setSelectedVoiceId(script.voice_id);
+          
+          // Fetch voice name and preview URL from ElevenLabs
+          const { data } = await supabase.functions.invoke('elevenlabs-get-voices');
+          if (data?.success && data.voices) {
+            const voice = data.voices.find((v: any) => v.voice_id === script.voice_id);
+            if (voice) {
+              setCurrentVoiceName(voice.name);
+              setCurrentVoicePreviewUrl(voice.preview_url || null);
+            }
           }
         }
       }
@@ -162,6 +179,68 @@ export default function Settings() {
     }
   };
 
+  const handleLanguageChange = async (langCode: string) => {
+    if (!profile.elevenlabs_agent_id) {
+      toast.error('יש לרכוש מספר טלפון קודם כדי לשנות שפה');
+      return;
+    }
+
+    setSavingLanguage(true);
+    const previousLanguage = selectedLanguage;
+    setSelectedLanguage(langCode);
+
+    try {
+      // Get user's active script
+      const { data: scripts } = await supabase
+        .from('scripts')
+        .select('id')
+        .eq('user_id', user!.id)
+        .eq('is_active', true)
+        .limit(1);
+
+      const scriptId = scripts?.[0]?.id;
+
+      if (!scriptId) {
+        toast.error('יש ליצור תסריט פעיל קודם');
+        setSelectedLanguage(previousLanguage);
+        setSavingLanguage(false);
+        return;
+      }
+
+      // Update language in the script
+      await supabase
+        .from('scripts')
+        .update({ language: langCode })
+        .eq('id', scriptId);
+
+      // Update the agent with new language
+      const { data, error } = await supabase.functions.invoke('elevenlabs-update-agent', {
+        body: { 
+          script_id: scriptId,
+          language: langCode 
+        }
+      });
+
+      if (error) throw error;
+
+      if (data?.success) {
+        toast.success('שפת הסוכן עודכנה בהצלחה');
+        // Reset voice selection when language changes (voice might not support new language)
+        setSelectedVoiceId(null);
+        setCurrentVoiceName(null);
+        setCurrentVoicePreviewUrl(null);
+      } else {
+        throw new Error(data?.error || 'Failed to update language');
+      }
+    } catch (error) {
+      console.error('Error updating language:', error);
+      setSelectedLanguage(previousLanguage);
+      toast.error('שגיאה בעדכון השפה');
+    } finally {
+      setSavingLanguage(false);
+    }
+  };
+
   const handleVoiceChange = async (voiceId: string, voiceName?: string) => {
     setSelectedVoiceId(voiceId);
     
@@ -216,6 +295,7 @@ export default function Settings() {
             const voice = voicesData.voices.find((v: any) => v.voice_id === voiceId);
             if (voice) {
               setCurrentVoiceName(voice.name);
+              setCurrentVoicePreviewUrl(voice.preview_url || null);
             }
           }
         }
@@ -333,82 +413,137 @@ export default function Settings() {
         {/* Phone Number Management */}
         <PhoneNumberManager />
 
-        {/* Voice Settings */}
+        {/* Language & Voice Settings */}
         {profile.elevenlabs_agent_id && (
-          <Card className="border-0 shadow-sm">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Volume2 className="h-5 w-5 text-primary" />
-                קול הסוכן
-              </CardTitle>
-              <CardDescription>
-                בחר את הקול שבו הסוכן ידבר עם הלקוחות
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              {/* Current Voice Display */}
-              {currentVoiceName && (
-                <div className={`mb-4 p-3 rounded-lg border transition-all ${
-                  playingPreview 
-                    ? 'bg-primary/10 border-primary/40 shadow-md' 
-                    : 'bg-primary/5 border-primary/20'
-                }`}>
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      {playingPreview ? (
-                        <div className="flex items-center gap-0.5 h-4">
-                          <div className="w-1 h-3 bg-primary rounded-full animate-audio-wave" style={{ animationDelay: '0ms' }} />
-                          <div className="w-1 h-4 bg-primary rounded-full animate-audio-wave" style={{ animationDelay: '150ms' }} />
-                          <div className="w-1 h-2 bg-primary rounded-full animate-audio-wave" style={{ animationDelay: '300ms' }} />
-                          <div className="w-1 h-3 bg-primary rounded-full animate-audio-wave" style={{ animationDelay: '450ms' }} />
-                        </div>
-                      ) : (
-                        <Volume2 className="h-4 w-4 text-primary" />
-                      )}
-                      <span className="text-sm text-muted-foreground">קול נוכחי:</span>
-                      <span className={`font-medium text-primary ${playingPreview ? 'animate-audio-pulse' : ''}`}>
-                        {currentVoiceName}
-                      </span>
-                    </div>
-                    {currentVoicePreviewUrl && (
-                      <Button
-                        variant={playingPreview ? "default" : "outline"}
-                        size="sm"
-                        onClick={playCurrentVoicePreview}
-                        className={`h-8 transition-all ${playingPreview ? 'gradient-primary text-white' : ''}`}
-                      >
-                        {playingPreview ? (
-                          <>
-                            <Pause className="ml-1 h-4 w-4" />
-                            עצור
-                          </>
-                        ) : (
-                          <>
-                            <Play className="ml-1 h-4 w-4" />
-                            האזן
-                          </>
-                        )}
-                      </Button>
-                    )}
+          <>
+            {/* Language Selection */}
+            <Card className="border-0 shadow-sm">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Languages className="h-5 w-5 text-primary" />
+                  שפת הסוכן
+                </CardTitle>
+                <CardDescription>
+                  בחר את השפה הראשית שבה הסוכן ידבר • הסוכן יזהה אוטומטית מעבר בין שפות
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {savingLanguage && (
+                  <div className="flex items-center gap-2 mb-4 text-sm text-muted-foreground">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    מעדכן את השפה...
                   </div>
-                </div>
-              )}
-              
-              {savingVoice && (
-                <div className="flex items-center gap-2 mb-4 text-sm text-muted-foreground">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  מעדכן את הקול...
-                </div>
-              )}
-              <VoiceSelector 
-                selectedVoiceId={selectedVoiceId} 
-                onSelect={(voiceId) => {
-                  handleVoiceChange(voiceId);
-                }}
-                currentVoiceName={currentVoiceName}
-              />
-            </CardContent>
-          </Card>
+                )}
+                <RadioGroup 
+                  value={selectedLanguage} 
+                  onValueChange={handleLanguageChange}
+                  className="grid grid-cols-3 gap-3"
+                  disabled={savingLanguage}
+                >
+                  {LANGUAGES.map((lang) => (
+                    <div
+                      key={lang.code}
+                      className={`flex items-center gap-3 p-4 rounded-xl border cursor-pointer transition-all ${
+                        selectedLanguage === lang.code
+                          ? 'border-primary bg-primary/10 shadow-md'
+                          : 'border-border hover:border-primary/50 hover:bg-muted/30'
+                      }`}
+                      onClick={() => !savingLanguage && handleLanguageChange(lang.code)}
+                    >
+                      <RadioGroupItem value={lang.code} id={`lang-${lang.code}`} />
+                      <Label 
+                        htmlFor={`lang-${lang.code}`} 
+                        className="flex items-center gap-2 cursor-pointer"
+                      >
+                        <span className="text-xl">{lang.flag}</span>
+                        <span className="font-medium">{lang.name}</span>
+                      </Label>
+                    </div>
+                  ))}
+                </RadioGroup>
+                <p className="mt-3 text-sm text-muted-foreground">
+                  💡 הסוכן תומך במעבר אוטומטי בין עברית, ערבית ואנגלית בזמן השיחה
+                </p>
+              </CardContent>
+            </Card>
+
+            {/* Voice Settings */}
+            <Card className="border-0 shadow-sm">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Volume2 className="h-5 w-5 text-primary" />
+                  קול הסוכן
+                </CardTitle>
+                <CardDescription>
+                  בחר את הקול שבו הסוכן ידבר עם הלקוחות
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {/* Current Voice Display */}
+                {currentVoiceName && (
+                  <div className={`mb-4 p-3 rounded-lg border transition-all ${
+                    playingPreview 
+                      ? 'bg-primary/10 border-primary/40 shadow-md' 
+                      : 'bg-primary/5 border-primary/20'
+                  }`}>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        {playingPreview ? (
+                          <div className="flex items-center gap-0.5 h-4">
+                            <div className="w-1 h-3 bg-primary rounded-full animate-audio-wave" style={{ animationDelay: '0ms' }} />
+                            <div className="w-1 h-4 bg-primary rounded-full animate-audio-wave" style={{ animationDelay: '150ms' }} />
+                            <div className="w-1 h-2 bg-primary rounded-full animate-audio-wave" style={{ animationDelay: '300ms' }} />
+                            <div className="w-1 h-3 bg-primary rounded-full animate-audio-wave" style={{ animationDelay: '450ms' }} />
+                          </div>
+                        ) : (
+                          <Volume2 className="h-4 w-4 text-primary" />
+                        )}
+                        <span className="text-sm text-muted-foreground">קול נוכחי:</span>
+                        <span className={`font-medium text-primary ${playingPreview ? 'animate-audio-pulse' : ''}`}>
+                          {currentVoiceName}
+                        </span>
+                      </div>
+                      {currentVoicePreviewUrl && (
+                        <Button
+                          variant={playingPreview ? "default" : "outline"}
+                          size="sm"
+                          onClick={playCurrentVoicePreview}
+                          className={`h-8 transition-all ${playingPreview ? 'gradient-primary text-white' : ''}`}
+                        >
+                          {playingPreview ? (
+                            <>
+                              <Pause className="ml-1 h-4 w-4" />
+                              עצור
+                            </>
+                          ) : (
+                            <>
+                              <Play className="ml-1 h-4 w-4" />
+                              האזן
+                            </>
+                          )}
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                )}
+                
+                {savingVoice && (
+                  <div className="flex items-center gap-2 mb-4 text-sm text-muted-foreground">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    מעדכן את הקול...
+                  </div>
+                )}
+                <VoiceSelector 
+                  selectedVoiceId={selectedVoiceId} 
+                  onSelect={(voiceId) => {
+                    handleVoiceChange(voiceId);
+                  }}
+                  currentVoiceName={currentVoiceName}
+                  language={selectedLanguage}
+                />
+              </CardContent>
+            </Card>
+          </>
         )}
 
         {/* Account Info */}
