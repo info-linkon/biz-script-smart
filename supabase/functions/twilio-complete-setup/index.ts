@@ -215,13 +215,16 @@ serve(async (req) => {
               }
             ]
           },
-          // Voice: ElevenLabs - use multilingual model for Hebrew/Arabic
+          // Voice: ElevenLabs - always use multilingual model for best Hebrew/Arabic quality
           voice: {
             provider: "11labs",
             voiceId: script?.voice_id || "JBFqnCBsd6RMkjVDRZzb",
-            model: (language === "he" || language === "ar") ? "eleven_multilingual_v2" : "eleven_turbo_v2_5",
-            stability: 0.5,
-            similarityBoost: 0.75
+            model: "eleven_multilingual_v2", // Always use multilingual for best Hebrew/Arabic quality
+            stability: 0.6, // Slightly higher stability for clearer pronunciation
+            similarityBoost: 0.8,
+            style: 0.3, // Moderate style for natural speech
+            useSpeakerBoost: true, // Enhance voice clarity
+            optimizeStreamingLatency: 2, // Balance between latency and quality
           },
           firstMessage: greetingMessage,
           serverUrl: `${SUPABASE_URL}/functions/v1/vapi-webhook`,
