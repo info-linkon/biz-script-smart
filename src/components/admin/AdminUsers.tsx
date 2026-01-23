@@ -20,12 +20,14 @@ import {
   Calendar,
   Trash2,
   UserX,
-  UserCheck
+  UserCheck,
+  Mail
 } from 'lucide-react';
 
 interface User {
   id: string;
   user_id: string | null;
+  email: string | null;
   business_name: string | null;
   phone: string | null;
   is_admin: boolean;
@@ -163,6 +165,7 @@ export function AdminUsers({ users, plans, currentUserId, onRefresh }: AdminUser
     const matchesSearch = !searchQuery || 
       u.business_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
       u.phone?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      u.email?.toLowerCase().includes(searchQuery.toLowerCase()) ||
       u.user_id?.toLowerCase().includes(searchQuery.toLowerCase());
     
     const matchesStatus = 
@@ -217,6 +220,7 @@ export function AdminUsers({ users, plans, currentUserId, onRefresh }: AdminUser
             <TableHeader>
               <TableRow>
                 <TableHead className="text-right">שם העסק</TableHead>
+                <TableHead className="text-right">אימייל</TableHead>
                 <TableHead className="text-right">טלפון</TableHead>
                 <TableHead className="text-right">תוכנית</TableHead>
                 <TableHead className="text-right">סטטוס</TableHead>
@@ -238,7 +242,10 @@ export function AdminUsers({ users, plans, currentUserId, onRefresh }: AdminUser
                       )}
                     </div>
                   </TableCell>
-                  <TableCell>{u.phone || 'לא צוין'}</TableCell>
+                  <TableCell className="text-muted-foreground text-sm" dir="ltr">
+                    {u.email || 'לא צוין'}
+                  </TableCell>
+                  <TableCell dir="ltr">{u.phone || 'לא צוין'}</TableCell>
                   <TableCell>
                     <Badge variant="outline">{u.plan_name || 'ללא תוכנית'}</Badge>
                   </TableCell>
@@ -355,10 +362,17 @@ export function AdminUsers({ users, plans, currentUserId, onRefresh }: AdminUser
                 </div>
                 <div className="space-y-1">
                   <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Mail className="h-4 w-4" />
+                    אימייל
+                  </div>
+                  <p className="font-medium" dir="ltr">{selectedUser.email || 'לא צוין'}</p>
+                </div>
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
                     <Phone className="h-4 w-4" />
                     טלפון
                   </div>
-                  <p className="font-medium">{selectedUser.phone || 'לא צוין'}</p>
+                  <p className="font-medium" dir="ltr">{selectedUser.phone || 'לא צוין'}</p>
                 </div>
                 <div className="space-y-1">
                   <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -369,7 +383,7 @@ export function AdminUsers({ users, plans, currentUserId, onRefresh }: AdminUser
                     {new Date(selectedUser.created_at).toLocaleDateString('he-IL')}
                   </p>
                 </div>
-                <div className="space-y-1">
+                <div className="space-y-1 col-span-2">
                   <div className="flex items-center gap-2 text-sm text-muted-foreground">
                     <Shield className="h-4 w-4" />
                     סטטוס
