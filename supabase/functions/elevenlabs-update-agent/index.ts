@@ -109,8 +109,7 @@ serve(async (req) => {
     // Always include TTS config with model_id to upgrade existing agents
     const finalVoiceId = voice_id || script.voice_id || "JBFqnCBsd6RMkjVDRZzb";
     updatePayload.conversation_config.tts = {
-      voice_id: finalVoiceId,
-      model_id: "eleven_v3" // Upgraded: 74 languages including enhanced Hebrew support
+      voice_id: finalVoiceId
     };
 
     console.log('Updating agent:', agentId, 'with payload:', JSON.stringify(updatePayload, null, 2));
