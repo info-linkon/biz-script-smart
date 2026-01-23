@@ -12,12 +12,16 @@ import {
   Phone, 
   Clock, 
   TrendingUp, 
+  TrendingDown,
+  Minus,
   Languages, 
   Calendar,
   CheckCircle,
   Timer,
   Loader2,
-  CalendarIcon
+  CalendarIcon,
+  ArrowUpRight,
+  ArrowDownRight
 } from 'lucide-react';
 import { format, subDays, differenceInDays, eachDayOfInterval } from 'date-fns';
 import { he } from 'date-fns/locale';
@@ -90,6 +94,13 @@ export default function Statistics() {
     successRate: 0,
     busiestHour: '',
   });
+  const [previousStats, setPreviousStats] = useState({
+    totalCalls: 0,
+    completedCalls: 0,
+    avgDuration: 0,
+    totalDuration: 0,
+    successRate: 0,
+  });
 
   useEffect(() => {
     if (user && dateRange?.from && dateRange?.to) {
@@ -103,25 +114,59 @@ export default function Statistics() {
     try {
       setLoading(true);
       
-      const { data, error } = await supabase
+      // Calculate the previous period
+      const rangeDays = differenceInDays(dateRange.to, dateRange.from) + 1;
+      const previousFrom = subDays(dateRange.from, rangeDays);
+      const previousTo = subDays(dateRange.from, 1);
+      
+      // Fetch current period data
+      const { data: currentData, error: currentError } = await supabase
         .from('calls')
         .select('*')
         .gte('created_at', dateRange.from.toISOString())
         .lte('created_at', dateRange.to.toISOString())
         .order('created_at', { ascending: true });
 
-      if (error) throw error;
+      if (currentError) throw currentError;
       
-      const callsData = data || [];
+      // Fetch previous period data for comparison
+      const { data: previousData, error: previousError } = await supabase
+        .from('calls')
+        .select('*')
+        .gte('created_at', previousFrom.toISOString())
+        .lte('created_at', previousTo.toISOString());
+
+      if (previousError) throw previousError;
+      
+      const callsData = currentData || [];
+      const prevCallsData = previousData || [];
+      
       setCalls(callsData);
       
       processStatistics(callsData);
+      processPreviousStatistics(prevCallsData);
     } catch (error) {
       console.error('Error fetching statistics:', error);
       toast.error('שגיאה בטעינת הסטטיסטיקות');
     } finally {
       setLoading(false);
     }
+  };
+
+  const processPreviousStatistics = (callsData: Call[]) => {
+    const totalCalls = callsData.length;
+    const completedCalls = callsData.filter(c => c.status === 'completed').length;
+    const totalDuration = callsData.reduce((acc, c) => acc + (c.duration_seconds || 0), 0);
+    const avgDuration = totalCalls > 0 ? Math.round(totalDuration / totalCalls) : 0;
+    const successRate = totalCalls > 0 ? Math.round((completedCalls / totalCalls) * 100) : 0;
+
+    setPreviousStats({
+      totalCalls,
+      completedCalls,
+      avgDuration,
+      totalDuration,
+      successRate,
+    });
   };
 
   const processStatistics = (callsData: Call[]) => {
@@ -225,6 +270,43 @@ export default function Statistics() {
       return `${hours} שעות ${mins} דקות`;
     }
     return `${mins} דקות`;
+  };
+
+  const calculateChange = (current: number, previous: number): { value: number; isPositive: boolean; isZero: boolean } => {
+    if (previous === 0) {
+      return { value: current > 0 ? 100 : 0, isPositive: current > 0, isZero: current === 0 };
+    }
+    const change = Math.round(((current - previous) / previous) * 100);
+    return { value: Math.abs(change), isPositive: change > 0, isZero: change === 0 };
+  };
+
+  const ChangeIndicator = ({ current, previous, invertColors = false }: { current: number; previous: number; invertColors?: boolean }) => {
+    const change = calculateChange(current, previous);
+    
+    if (change.isZero) {
+      return (
+        <div className="flex items-center gap-1 text-muted-foreground text-xs">
+          <Minus className="h-3 w-3" />
+          <span>ללא שינוי</span>
+        </div>
+      );
+    }
+    
+    const isGood = invertColors ? !change.isPositive : change.isPositive;
+    
+    return (
+      <div className={cn(
+        "flex items-center gap-1 text-xs",
+        isGood ? "text-green-600" : "text-red-600"
+      )}>
+        {change.isPositive ? (
+          <ArrowUpRight className="h-3 w-3" />
+        ) : (
+          <ArrowDownRight className="h-3 w-3" />
+        )}
+        <span>{change.value}%</span>
+      </div>
+    );
   };
 
   if (loading) {
@@ -342,6 +424,22 @@ export default function Statistics() {
           </div>
         </div>
 
+        {/* Comparison Info */}
+        <Card className="border-0 shadow-sm bg-secondary/30">
+          <CardContent className="p-4">
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <TrendingUp className="h-4 w-4" />
+              <span>
+                השוואה לתקופה הקודמת: {dateRange?.from && dateRange?.to && (
+                  <>
+                    {format(subDays(dateRange.from, differenceInDays(dateRange.to, dateRange.from) + 1), 'dd/MM', { locale: he })} - {format(subDays(dateRange.from, 1), 'dd/MM', { locale: he })}
+                  </>
+                )}
+              </span>
+            </div>
+          </CardContent>
+        </Card>
+
         {/* KPI Cards */}
         <div className="grid grid-cols-2 lg:grid-cols-6 gap-4">
           <Card className="border-0 shadow-sm">
@@ -350,9 +448,13 @@ export default function Statistics() {
                 <div className="h-10 w-10 rounded-xl bg-primary/10 flex items-center justify-center">
                   <Phone className="h-5 w-5 text-primary" />
                 </div>
-                <div>
-                  <p className="text-2xl font-bold">{stats.totalCalls}</p>
+                <div className="flex-1">
+                  <div className="flex items-center justify-between">
+                    <p className="text-2xl font-bold">{stats.totalCalls}</p>
+                    <ChangeIndicator current={stats.totalCalls} previous={previousStats.totalCalls} />
+                  </div>
                   <p className="text-sm text-muted-foreground">סה"כ שיחות</p>
+                  <p className="text-xs text-muted-foreground">לעומת {previousStats.totalCalls} קודם</p>
                 </div>
               </div>
             </CardContent>
@@ -364,9 +466,13 @@ export default function Statistics() {
                 <div className="h-10 w-10 rounded-xl bg-green-500/10 flex items-center justify-center">
                   <CheckCircle className="h-5 w-5 text-green-600" />
                 </div>
-                <div>
-                  <p className="text-2xl font-bold">{stats.completedCalls}</p>
+                <div className="flex-1">
+                  <div className="flex items-center justify-between">
+                    <p className="text-2xl font-bold">{stats.completedCalls}</p>
+                    <ChangeIndicator current={stats.completedCalls} previous={previousStats.completedCalls} />
+                  </div>
                   <p className="text-sm text-muted-foreground">הושלמו</p>
+                  <p className="text-xs text-muted-foreground">לעומת {previousStats.completedCalls} קודם</p>
                 </div>
               </div>
             </CardContent>
@@ -378,9 +484,13 @@ export default function Statistics() {
                 <div className="h-10 w-10 rounded-xl bg-blue-500/10 flex items-center justify-center">
                   <TrendingUp className="h-5 w-5 text-blue-600" />
                 </div>
-                <div>
-                  <p className="text-2xl font-bold">{stats.successRate}%</p>
+                <div className="flex-1">
+                  <div className="flex items-center justify-between">
+                    <p className="text-2xl font-bold">{stats.successRate}%</p>
+                    <ChangeIndicator current={stats.successRate} previous={previousStats.successRate} />
+                  </div>
                   <p className="text-sm text-muted-foreground">אחוז הצלחה</p>
+                  <p className="text-xs text-muted-foreground">לעומת {previousStats.successRate}% קודם</p>
                 </div>
               </div>
             </CardContent>
@@ -392,9 +502,13 @@ export default function Statistics() {
                 <div className="h-10 w-10 rounded-xl bg-orange-500/10 flex items-center justify-center">
                   <Clock className="h-5 w-5 text-orange-600" />
                 </div>
-                <div>
-                  <p className="text-2xl font-bold">{formatDuration(stats.avgDuration)}</p>
+                <div className="flex-1">
+                  <div className="flex items-center justify-between">
+                    <p className="text-2xl font-bold">{formatDuration(stats.avgDuration)}</p>
+                    <ChangeIndicator current={stats.avgDuration} previous={previousStats.avgDuration} />
+                  </div>
                   <p className="text-sm text-muted-foreground">זמן ממוצע</p>
+                  <p className="text-xs text-muted-foreground">לעומת {formatDuration(previousStats.avgDuration)} קודם</p>
                 </div>
               </div>
             </CardContent>
@@ -406,8 +520,11 @@ export default function Statistics() {
                 <div className="h-10 w-10 rounded-xl bg-purple-500/10 flex items-center justify-center">
                   <Timer className="h-5 w-5 text-purple-600" />
                 </div>
-                <div>
-                  <p className="text-lg font-bold">{formatTotalDuration(stats.totalDuration)}</p>
+                <div className="flex-1">
+                  <div className="flex items-center justify-between">
+                    <p className="text-lg font-bold">{formatTotalDuration(stats.totalDuration)}</p>
+                    <ChangeIndicator current={stats.totalDuration} previous={previousStats.totalDuration} />
+                  </div>
                   <p className="text-sm text-muted-foreground">זמן כולל</p>
                 </div>
               </div>
