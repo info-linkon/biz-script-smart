@@ -50,7 +50,17 @@ serve(async (req) => {
     // Create service role client for database operations
     const supabase = createClient(SUPABASE_URL!, SUPABASE_SERVICE_ROLE_KEY!);
 
-    const { voice_id, business_name, greeting_message, custom_prompt } = await req.json();
+    // Parse body if present, otherwise use empty object
+    let body = {};
+    try {
+      const text = await req.text();
+      if (text) {
+        body = JSON.parse(text);
+      }
+    } catch (e) {
+      // Body is empty or invalid, use defaults
+    }
+    const { voice_id, business_name, greeting_message, custom_prompt } = body as any;
 
     // Get user's profile for business info
     const { data: profile } = await supabase
