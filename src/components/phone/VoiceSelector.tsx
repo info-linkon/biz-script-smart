@@ -1,10 +1,12 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Label } from '@/components/ui/label';
+import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { supabase } from '@/integrations/supabase/client';
-import { Loader2, Volume2, Play, Pause } from 'lucide-react';
+import { Loader2, Volume2, Play, Search, X } from 'lucide-react';
 import { toast } from 'sonner';
 
 interface Voice {
@@ -28,6 +30,34 @@ export function VoiceSelector({ selectedVoiceId, onSelect, compact = false, curr
   const [loading, setLoading] = useState(true);
   const [playingId, setPlayingId] = useState<string | null>(null);
   const [audioElement, setAudioElement] = useState<HTMLAudioElement | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState<string>('all');
+
+  // Get unique categories from voices
+  const categories = useMemo(() => {
+    const cats = new Set<string>();
+    voices.forEach(voice => {
+      if (voice.category) cats.add(voice.category);
+      if (voice.labels?.accent) cats.add(voice.labels.accent);
+    });
+    return Array.from(cats);
+  }, [voices]);
+
+  // Filter voices based on search and category
+  const filteredVoices = useMemo(() => {
+    return voices.filter(voice => {
+      const matchesSearch = searchQuery === '' || 
+        voice.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        voice.description?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        voice.labels?.accent?.toLowerCase().includes(searchQuery.toLowerCase());
+      
+      const matchesCategory = categoryFilter === 'all' || 
+        voice.category === categoryFilter ||
+        voice.labels?.accent === categoryFilter;
+      
+      return matchesSearch && matchesCategory;
+    });
+  }, [voices, searchQuery, categoryFilter]);
 
   useEffect(() => {
     fetchVoices();
@@ -181,13 +211,67 @@ export function VoiceSelector({ selectedVoiceId, onSelect, compact = false, curr
           בחר את הקול שבו הסוכן ידבר עם הלקוחות
         </CardDescription>
       </CardHeader>
-      <CardContent>
+      <CardContent className="space-y-4">
+        {/* Search and Filter Controls */}
+        <div className="flex flex-col sm:flex-row gap-3">
+          <div className="relative flex-1">
+            <Search className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="חפש קול..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="pr-9 pl-9"
+            />
+            {searchQuery && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="absolute left-1 top-1/2 -translate-y-1/2 h-7 w-7"
+                onClick={() => setSearchQuery('')}
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            )}
+          </div>
+          {categories.length > 0 && (
+            <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+              <SelectTrigger className="w-full sm:w-[180px]">
+                <SelectValue placeholder="כל הקטגוריות" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">כל הקטגוריות</SelectItem>
+                {categories.map((cat) => (
+                  <SelectItem key={cat} value={cat}>{cat}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+        </div>
+
+        {/* Results count */}
+        <div className="text-sm text-muted-foreground">
+          {filteredVoices.length} קולות נמצאו
+          {(searchQuery || categoryFilter !== 'all') && (
+            <Button
+              variant="link"
+              size="sm"
+              className="mr-2 h-auto p-0 text-primary"
+              onClick={() => {
+                setSearchQuery('');
+                setCategoryFilter('all');
+              }}
+            >
+              נקה סינון
+            </Button>
+          )}
+        </div>
+
         <RadioGroup 
           value={selectedVoiceId || ''} 
           onValueChange={onSelect}
           className="grid gap-3"
         >
-          {voices.map((voice, index) => (
+          {filteredVoices.map((voice, index) => (
             <div 
               key={voice.voice_id} 
               className={`flex items-center justify-between p-4 rounded-xl border transition-all duration-300 animate-fade-in cursor-pointer group ${
