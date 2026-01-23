@@ -1,4 +1,4 @@
-import { Check, Building2, FileText, Volume2, Phone, Headphones } from 'lucide-react';
+import { Check, Building2, FileText, Volume2, Phone, Headphones, CreditCard } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { OnboardingStep } from '@/hooks/useOnboardingStatus';
 
@@ -6,6 +6,7 @@ interface OnboardingProgressProps {
   currentStep: OnboardingStep;
   completedSteps: {
     profile: boolean;
+    plan: boolean;
     script: boolean;
     voice: boolean;
     test: boolean;
@@ -15,6 +16,7 @@ interface OnboardingProgressProps {
 
 const steps = [
   { id: 'profile' as const, label: 'פרטי עסק', icon: Building2 },
+  { id: 'plan' as const, label: 'תוכנית', icon: CreditCard },
   { id: 'script' as const, label: 'תסריט', icon: FileText },
   { id: 'voice' as const, label: 'קול', icon: Volume2 },
   { id: 'test' as const, label: 'בדיקה', icon: Headphones },
