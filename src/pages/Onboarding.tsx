@@ -5,6 +5,7 @@ import { OnboardingProgress } from '@/components/onboarding/OnboardingProgress';
 import { ProfileStep } from '@/components/onboarding/steps/ProfileStep';
 import { ScriptStep } from '@/components/onboarding/steps/ScriptStep';
 import { VoiceStep } from '@/components/onboarding/steps/VoiceStep';
+import { AgentTestStep } from '@/components/onboarding/steps/AgentTestStep';
 import { PhoneStep } from '@/components/onboarding/steps/PhoneStep';
 import { Loader2, Mic } from 'lucide-react';
 
@@ -61,10 +62,13 @@ export default function Onboarding() {
     );
   }
 
+  const hasAgent = !!(profile?.elevenlabs_agent_id);
+  
   const completedSteps = {
     profile: hasBusinessProfile,
     script: hasActiveScript,
     voice: hasVoiceSelected,
+    test: hasAgent,
     phone: hasPhoneNumber,
   };
 
@@ -113,15 +117,22 @@ export default function Onboarding() {
           {currentStep === 'voice' && (
             <VoiceStep
               initialVoiceId={activeScript?.voice_id}
-              onComplete={() => handleStepComplete('phone')}
+              onComplete={() => handleStepComplete('test')}
               onBack={() => handleBack('script')}
+            />
+          )}
+          
+          {currentStep === 'test' && (
+            <AgentTestStep
+              onComplete={() => handleStepComplete('phone')}
+              onBack={() => handleBack('voice')}
             />
           )}
           
           {currentStep === 'phone' && (
             <PhoneStep
               onComplete={() => handleStepComplete('done')}
-              onBack={() => handleBack('voice')}
+              onBack={() => handleBack('test')}
             />
           )}
         </div>

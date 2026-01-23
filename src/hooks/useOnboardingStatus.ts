@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
 
-export type OnboardingStep = 'profile' | 'script' | 'voice' | 'phone' | 'done';
+export type OnboardingStep = 'profile' | 'script' | 'voice' | 'test' | 'phone' | 'done';
 
 export interface OnboardingStatus {
   isComplete: boolean;
@@ -112,9 +112,12 @@ export function useOnboardingStatus(): OnboardingStatus {
     if (hasActiveScript) {
       currentStep = 'voice';
       if (hasVoiceSelected) {
-        currentStep = 'phone';
-        if (hasPhoneNumber && hasAgent) {
-          currentStep = 'done';
+        currentStep = 'test';
+        if (hasAgent) {
+          currentStep = 'phone';
+          if (hasPhoneNumber) {
+            currentStep = 'done';
+          }
         }
       }
     }
