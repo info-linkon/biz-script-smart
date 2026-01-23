@@ -98,57 +98,7 @@ serve(async (req) => {
         agent: {
           prompt: {
             prompt: systemPrompt,
-            tools: [
-              {
-                type: "webhook",
-                name: "schedule_appointment",
-                description: "Schedule an appointment for the caller",
-                webhook: {
-                  url: `${SUPABASE_URL}/functions/v1/elevenlabs-schedule-appointment`,
-                  method: "POST",
-                },
-                parameters: {
-                  type: "object",
-                  properties: {
-                    customer_name: {
-                      type: "string",
-                      description: "The name of the customer"
-                    },
-                    customer_phone: {
-                      type: "string",
-                      description: "The phone number of the customer"
-                    },
-                    date: {
-                      type: "string",
-                      description: "The date of the appointment (YYYY-MM-DD format)"
-                    },
-                    time: {
-                      type: "string",
-                      description: "The time of the appointment (HH:MM format)"
-                    },
-                    service: {
-                      type: "string",
-                      description: "The type of service or reason for the appointment"
-                    }
-                  },
-                  required: ["customer_name", "customer_phone", "date", "time"]
-                }
-              },
-              {
-                type: "webhook",
-                name: "get_business_info",
-                description: "Get updated business information and availability",
-                webhook: {
-                  url: `${SUPABASE_URL}/functions/v1/elevenlabs-webhook`,
-                  method: "POST",
-                }
-              },
-              {
-                type: "system",
-                name: "language_detection",
-                description: "Automatically detect and switch to the caller's language"
-              }
-            ]
+            tools: []
           },
           first_message: finalGreeting,
           language: script?.language || "he",
