@@ -348,19 +348,34 @@ export default function Settings() {
             <CardContent>
               {/* Current Voice Display */}
               {currentVoiceName && (
-                <div className="mb-4 p-3 rounded-lg bg-primary/5 border border-primary/20">
+                <div className={`mb-4 p-3 rounded-lg border transition-all ${
+                  playingPreview 
+                    ? 'bg-primary/10 border-primary/40 shadow-md' 
+                    : 'bg-primary/5 border-primary/20'
+                }`}>
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                      <Volume2 className="h-4 w-4 text-primary" />
+                      {playingPreview ? (
+                        <div className="flex items-center gap-0.5 h-4">
+                          <div className="w-1 h-3 bg-primary rounded-full animate-audio-wave" style={{ animationDelay: '0ms' }} />
+                          <div className="w-1 h-4 bg-primary rounded-full animate-audio-wave" style={{ animationDelay: '150ms' }} />
+                          <div className="w-1 h-2 bg-primary rounded-full animate-audio-wave" style={{ animationDelay: '300ms' }} />
+                          <div className="w-1 h-3 bg-primary rounded-full animate-audio-wave" style={{ animationDelay: '450ms' }} />
+                        </div>
+                      ) : (
+                        <Volume2 className="h-4 w-4 text-primary" />
+                      )}
                       <span className="text-sm text-muted-foreground">קול נוכחי:</span>
-                      <span className="font-medium text-primary">{currentVoiceName}</span>
+                      <span className={`font-medium text-primary ${playingPreview ? 'animate-audio-pulse' : ''}`}>
+                        {currentVoiceName}
+                      </span>
                     </div>
                     {currentVoicePreviewUrl && (
                       <Button
-                        variant="outline"
+                        variant={playingPreview ? "default" : "outline"}
                         size="sm"
                         onClick={playCurrentVoicePreview}
-                        className="h-8"
+                        className={`h-8 transition-all ${playingPreview ? 'gradient-primary text-white' : ''}`}
                       >
                         {playingPreview ? (
                           <>
