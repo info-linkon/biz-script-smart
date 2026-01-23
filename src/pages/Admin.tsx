@@ -12,7 +12,8 @@ import {
   Users,
   Phone,
   Calendar,
-  CreditCard
+  CreditCard,
+  MessageSquare
 } from 'lucide-react';
 
 import { AdminOverview } from '@/components/admin/AdminOverview';
@@ -20,6 +21,7 @@ import { AdminUsers } from '@/components/admin/AdminUsers';
 import { AdminCalls } from '@/components/admin/AdminCalls';
 import { AdminAppointments } from '@/components/admin/AdminAppointments';
 import { AdminPlans } from '@/components/admin/AdminPlans';
+import { AdminSupport } from '@/components/admin/AdminSupport';
 
 interface User {
   id: string;
@@ -46,6 +48,22 @@ interface Plan {
   is_active: boolean;
 }
 
+interface SupportTicket {
+  id: string;
+  user_id: string;
+  subject: string;
+  message: string;
+  status: string;
+  priority: string;
+  admin_response: string | null;
+  responded_at: string | null;
+  responded_by: string | null;
+  created_at: string;
+  updated_at: string;
+  user_email?: string;
+  user_business?: string;
+}
+
 interface Stats {
   totalUsers: number;
   activeUsers: number;
@@ -62,6 +80,7 @@ const Admin = () => {
   const navigate = useNavigate();
   const [users, setUsers] = useState<User[]>([]);
   const [plans, setPlans] = useState<Plan[]>([]);
+  const [supportTickets, setSupportTickets] = useState<SupportTicket[]>([]);
   const [stats, setStats] = useState<Stats>({
     totalUsers: 0,
     activeUsers: 0,
@@ -87,9 +106,46 @@ const Admin = () => {
     await Promise.all([
       fetchUsers(),
       fetchPlans(),
-      fetchStats()
+      fetchStats(),
+      fetchSupportTickets()
     ]);
     setLoading(false);
+  };
+
+  const fetchSupportTickets = async () => {
+    try {
+      // Fetch all support tickets
+      const { data: tickets, error } = await supabase
+        .from('support_tickets')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.error('Error fetching tickets:', error);
+        return;
+      }
+
+      // Get user emails from auth.users via profiles
+      const userIds = [...new Set(tickets?.map(t => t.user_id) || [])];
+      
+      // Get profiles for these users
+      const { data: profiles } = await supabase
+        .from('profiles')
+        .select('user_id, business_name')
+        .in('user_id', userIds);
+
+      const profileMap = new Map(profiles?.map(p => [p.user_id, p.business_name]) || []);
+
+      const ticketsWithUserInfo: SupportTicket[] = (tickets || []).map(ticket => ({
+        ...ticket,
+        user_email: ticket.user_id, // We'll show the user_id for now
+        user_business: profileMap.get(ticket.user_id) || undefined
+      }));
+
+      setSupportTickets(ticketsWithUserInfo);
+    } catch (error) {
+      console.error('Error fetching support tickets:', error);
+    }
   };
 
   const fetchUsers = async () => {
@@ -241,7 +297,7 @@ const Admin = () => {
 
         {/* Tabs Navigation */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="grid w-full grid-cols-5 h-12">
+          <TabsList className="grid w-full grid-cols-6 h-12">
             <TabsTrigger value="overview" className="flex items-center gap-2">
               <LayoutDashboard className="h-4 w-4" />
               <span className="hidden sm:inline">סקירה</span>
@@ -261,6 +317,10 @@ const Admin = () => {
             <TabsTrigger value="plans" className="flex items-center gap-2">
               <CreditCard className="h-4 w-4" />
               <span className="hidden sm:inline">תוכניות</span>
+            </TabsTrigger>
+            <TabsTrigger value="support" className="flex items-center gap-2">
+              <MessageSquare className="h-4 w-4" />
+              <span className="hidden sm:inline">תמיכה</span>
             </TabsTrigger>
           </TabsList>
 
@@ -288,6 +348,10 @@ const Admin = () => {
 
             <TabsContent value="plans">
               <AdminPlans plans={plans} onRefresh={fetchPlans} />
+            </TabsContent>
+
+            <TabsContent value="support">
+              <AdminSupport tickets={supportTickets} onRefresh={fetchSupportTickets} />
             </TabsContent>
           </div>
         </Tabs>
