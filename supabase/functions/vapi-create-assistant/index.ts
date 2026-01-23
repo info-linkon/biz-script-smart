@@ -104,10 +104,11 @@ serve(async (req) => {
       name: `Assistant - ${finalBusinessName}`,
       
       // Transcriber: Deepgram Nova-2 with Hebrew support
+      // Transcriber: Deepgram Nova-2 with multilingual mode for Hebrew/Arabic
       transcriber: {
         provider: "deepgram",
         model: "nova-2",
-        language: language === "he" ? "he" : language === "ar" ? "ar" : "en",
+        language: (language === "he" || language === "ar") ? "multi" : language,
       },
       
       // LLM: OpenAI GPT-4
@@ -180,11 +181,11 @@ serve(async (req) => {
         ]
       },
       
-      // Voice: ElevenLabs with eleven_v3 model (supports Hebrew!)
+      // Voice: ElevenLabs - use multilingual model for Hebrew/Arabic
       voice: {
         provider: "11labs",
         voiceId: finalVoiceId,
-        model: "eleven_turbo_v2_5", // Supports Hebrew, Arabic, English
+        model: (language === "he" || language === "ar") ? "eleven_multilingual_v2" : "eleven_turbo_v2_5",
         stability: 0.5,
         similarityBoost: 0.75
       },

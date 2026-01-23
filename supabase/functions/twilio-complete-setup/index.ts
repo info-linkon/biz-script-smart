@@ -215,10 +215,11 @@ serve(async (req) => {
               }
             ]
           },
+          // Voice: ElevenLabs - use multilingual model for Hebrew/Arabic
           voice: {
             provider: "11labs",
             voiceId: script?.voice_id || "JBFqnCBsd6RMkjVDRZzb",
-            model: "eleven_turbo_v2_5",
+            model: (language === "he" || language === "ar") ? "eleven_multilingual_v2" : "eleven_turbo_v2_5",
             stability: 0.5,
             similarityBoost: 0.75
           },

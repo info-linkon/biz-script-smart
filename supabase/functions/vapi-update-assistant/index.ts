@@ -90,11 +90,11 @@ serve(async (req) => {
 
     // Build update payload for Vapi
     const updatePayload: any = {
-      // Update transcriber language
+      // Update transcriber language - use multilingual mode for Hebrew/Arabic
       transcriber: {
         provider: "deepgram",
         model: "nova-2",
-        language: language === "he" ? "he" : language === "ar" ? "ar" : "en",
+        language: (language === "he" || language === "ar") ? "multi" : language,
       },
       
       // Update LLM with new system prompt
@@ -149,11 +149,11 @@ serve(async (req) => {
         ]
       },
       
-      // Update voice
+      // Update voice - use multilingual model for Hebrew/Arabic
       voice: {
         provider: "11labs",
         voiceId: finalVoiceId,
-        model: "eleven_turbo_v2_5",
+        model: (language === "he" || language === "ar") ? "eleven_multilingual_v2" : "eleven_turbo_v2_5",
         stability: 0.5,
         similarityBoost: 0.75
       },
