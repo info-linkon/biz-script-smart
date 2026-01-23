@@ -32,3 +32,15 @@ verify_jwt = false
 
 [functions.vapi-test-connection]
 verify_jwt = false
+
+[functions.vapi-create-assistant]
+verify_jwt = false
+
+[functions.vapi-update-assistant]
+verify_jwt = false
+
+[functions.vapi-get-token]
+verify_jwt = false
+
+[functions.vapi-webhook]
+verify_jwt = false
