@@ -143,7 +143,7 @@ serve(async (req) => {
           },
           tts: {
             voice_id: voice_id || script?.voice_id || "JBFqnCBsd6RMkjVDRZzb", // George - supports Hebrew/Arabic
-            model_id: "eleven_turbo_v2_5" // Multilingual model supporting 32 languages including Hebrew
+            model_id: "eleven_v3" // Upgraded: 74 languages including enhanced Hebrew support
           }
         }
       };

@@ -106,13 +106,12 @@ serve(async (req) => {
       }
     };
 
-    // Add voice_id if provided or if script has one
-    const finalVoiceId = voice_id || script.voice_id;
-    if (finalVoiceId) {
-      updatePayload.conversation_config.tts = {
-        voice_id: finalVoiceId
-      };
-    }
+    // Always include TTS config with model_id to upgrade existing agents
+    const finalVoiceId = voice_id || script.voice_id || "JBFqnCBsd6RMkjVDRZzb";
+    updatePayload.conversation_config.tts = {
+      voice_id: finalVoiceId,
+      model_id: "eleven_v3" // Upgraded: 74 languages including enhanced Hebrew support
+    };
 
     console.log('Updating agent:', agentId, 'with payload:', JSON.stringify(updatePayload, null, 2));
 
