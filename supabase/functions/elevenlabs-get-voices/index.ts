@@ -43,6 +43,17 @@ serve(async (req) => {
       );
     }
 
+    // Get language parameter from request body
+    let language = 'he'; // Default to Hebrew
+    try {
+      const body = await req.json();
+      if (body.language) {
+        language = body.language;
+      }
+    } catch {
+      // No body or invalid JSON, use default
+    }
+
     // Fetch available voices from ElevenLabs
     const response = await fetch(
       'https://api.elevenlabs.io/v1/voices',
@@ -61,7 +72,7 @@ serve(async (req) => {
 
     const data = await response.json();
 
-    // Filter and format voices - prioritize Hebrew-compatible voices
+    // Filter and format voices based on language
     const voices = data.voices.map((voice: any) => ({
       voice_id: voice.voice_id,
       name: voice.name,
@@ -71,19 +82,63 @@ serve(async (req) => {
       description: voice.description,
     }));
 
-    // Sort to put multilingual voices first (they support Hebrew better)
-    const sortedVoices = voices.sort((a: any, b: any) => {
-      const aMultilingual = a.labels?.accent === 'multilingual' || a.name.toLowerCase().includes('multilingual');
-      const bMultilingual = b.labels?.accent === 'multilingual' || b.name.toLowerCase().includes('multilingual');
-      if (aMultilingual && !bMultilingual) return -1;
-      if (!aMultilingual && bMultilingual) return 1;
+    // Filter voices based on language compatibility
+    // Multilingual voices support Hebrew, Arabic, and English
+    // For Hebrew and Arabic, prioritize multilingual voices
+    // For English, all voices work but prioritize native English
+    const filteredVoices = voices.filter((voice: any) => {
+      const accent = voice.labels?.accent?.toLowerCase() || '';
+      const name = voice.name.toLowerCase();
+      const isMultilingual = accent.includes('multilingual') || 
+                             name.includes('multilingual') ||
+                             accent.includes('international');
+      
+      // For Hebrew and Arabic, we need multilingual voices
+      if (language === 'he' || language === 'ar') {
+        return isMultilingual;
+      }
+      
+      // For English, prefer native English voices but include multilingual too
+      if (language === 'en') {
+        const isEnglish = accent.includes('american') || 
+                          accent.includes('british') || 
+                          accent.includes('english') ||
+                          accent.includes('australian') ||
+                          accent.includes('irish') ||
+                          accent.includes('scottish');
+        return isEnglish || isMultilingual;
+      }
+      
+      return true;
+    });
+
+    // Sort voices - multilingual first for Hebrew/Arabic, quality voices first for English
+    const sortedVoices = filteredVoices.sort((a: any, b: any) => {
+      const aMultilingual = a.labels?.accent?.toLowerCase()?.includes('multilingual') || 
+                            a.name.toLowerCase().includes('multilingual');
+      const bMultilingual = b.labels?.accent?.toLowerCase()?.includes('multilingual') || 
+                            b.name.toLowerCase().includes('multilingual');
+      
+      // For Hebrew and Arabic, prioritize multilingual voices
+      if (language === 'he' || language === 'ar') {
+        if (aMultilingual && !bMultilingual) return -1;
+        if (!aMultilingual && bMultilingual) return 1;
+      }
+      
+      // For English, sort by category (premade first)
+      if (a.category === 'premade' && b.category !== 'premade') return -1;
+      if (a.category !== 'premade' && b.category === 'premade') return 1;
+      
       return 0;
     });
+
+    console.log(`Returning ${sortedVoices.length} voices for language: ${language}`);
 
     return new Response(
       JSON.stringify({ 
         success: true, 
-        voices: sortedVoices 
+        voices: sortedVoices,
+        language: language
       }),
       { 
         headers: { ...corsHeaders, 'Content-Type': 'application/json' } 

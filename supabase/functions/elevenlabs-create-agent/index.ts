@@ -205,7 +205,7 @@ serve(async (req) => {
   }
 });
 
-// Helper function to build system prompt
+// Helper function to build system prompt with multi-language support
 function buildSystemPrompt(params: {
   businessName: string;
   businessType: string;
@@ -220,47 +220,120 @@ function buildSystemPrompt(params: {
   const faq = script?.faq || [];
   const tone = script?.tone || 'friendly';
   const businessHours = script?.business_hours || '';
+  const language = script?.language || 'he';
+
+  // Language-specific content
+  const languageConfig: Record<string, {
+    intro: string;
+    speakIn: string;
+    businessInfo: string;
+    services: string;
+    faq: string;
+    tasks: string;
+    important: string;
+    tones: Record<string, string>;
+  }> = {
+    he: {
+      intro: 'אתה הסוכן הטלפוני של',
+      speakIn: 'דבר תמיד בעברית',
+      businessInfo: 'מידע על העסק',
+      services: 'השירותים שלנו',
+      faq: 'שאלות נפוצות',
+      tasks: 'משימות עיקריות',
+      important: 'חשוב',
+      tones: {
+        friendly: 'דבר בצורה חברית וחמה, עם חיוך בקול.',
+        professional: 'דבר בצורה מקצועית ורצינית.',
+        casual: 'דבר בצורה קלילה ולא פורמלית.',
+        formal: 'דבר בצורה פורמלית ומכובדת.',
+      }
+    },
+    ar: {
+      intro: 'أنت الوكيل الهاتفي لـ',
+      speakIn: 'تحدث دائماً بالعربية',
+      businessInfo: 'معلومات العمل',
+      services: 'خدماتنا',
+      faq: 'الأسئلة الشائعة',
+      tasks: 'المهام الرئيسية',
+      important: 'مهم',
+      tones: {
+        friendly: 'تحدث بطريقة ودية ودافئة.',
+        professional: 'تحدث بطريقة مهنية وجادة.',
+        casual: 'تحدث بطريقة غير رسمية.',
+        formal: 'تحدث بطريقة رسمية ومحترمة.',
+      }
+    },
+    en: {
+      intro: 'You are the phone agent for',
+      speakIn: 'Always speak in English',
+      businessInfo: 'Business Information',
+      services: 'Our Services',
+      faq: 'Frequently Asked Questions',
+      tasks: 'Main Tasks',
+      important: 'Important',
+      tones: {
+        friendly: 'Speak in a friendly and warm manner.',
+        professional: 'Speak in a professional and serious manner.',
+        casual: 'Speak in a casual and informal manner.',
+        formal: 'Speak in a formal and respectful manner.',
+      }
+    }
+  };
+
+  const config = languageConfig[language] || languageConfig.he;
+  const toneInstruction = config.tones[tone] || config.tones.friendly;
 
   const servicesString = services.length > 0 
-    ? `השירותים שלנו: ${services.join(', ')}` 
+    ? `${config.services}: ${services.join(', ')}` 
     : '';
 
-  const faqString = faq.map((item: any) => 
-    `שאלה: ${item.question}\nתשובה: ${item.answer}`
-  ).join('\n\n');
+  const faqString = faq.map((item: any) => {
+    if (language === 'ar') {
+      return `سؤال: ${item.question}\nجواب: ${item.answer}`;
+    } else if (language === 'en') {
+      return `Q: ${item.question}\nA: ${item.answer}`;
+    }
+    return `שאלה: ${item.question}\nתשובה: ${item.answer}`;
+  }).join('\n\n');
 
-  const toneInstructions: Record<string, string> = {
-    friendly: 'דבר בצורה חברית וחמה, עם חיוך בקול.',
-    professional: 'דבר בצורה מקצועית ורצינית.',
-    casual: 'דבר בצורה קלילה ולא פורמלית.',
-    formal: 'דבר בצורה פורמלית ומכובדת.',
-  };
-  const toneInstruction = toneInstructions[tone] || toneInstructions.friendly;
-
-  return `
-אתה הסוכן הטלפוני של ${businessName} - ${businessType}.
-${toneInstruction}
-
-מידע על העסק:
-- שם העסק: ${businessName}
-- סוג העסק: ${businessType}
-${businessPhone ? `- טלפון: ${businessPhone}` : ''}
-${businessHours ? `- שעות פעילות: ${businessHours}` : ''}
-${servicesString}
-
-${faqString ? `שאלות נפוצות:\n${faqString}` : ''}
-
-${customPrompt ? `הנחיות נוספות:\n${customPrompt}` : ''}
-
-משימות עיקריות:
+  // Build tasks based on language
+  const tasksContent = language === 'ar' ? `
+1. أجب على أسئلة العملاء حول العمل
+2. حدد المواعيد للعملاء - استخدم أداة schedule_appointment
+3. سجل تفاصيل المتصل وهدف المكالمة
+4. إذا لم تعرف الإجابة، اعرض على العميل ترك رسالة` 
+    : language === 'en' ? `
+1. Answer customer questions about the business
+2. Schedule appointments for customers - use the schedule_appointment tool
+3. Document caller details and call purpose
+4. If you don't know the answer, offer to take a message`
+    : `
 1. ענה על שאלות לקוחות בנוגע לעסק
 2. קבע פגישות עבור לקוחות שמבקשים - השתמש בכלי schedule_appointment
 3. תעד את פרטי המתקשר ואת מטרת השיחה
-4. אם אינך יודע תשובה, הצע ללקוח להשאיר הודעה ונחזור אליו
+4. אם אינך יודע תשובה, הצע ללקוח להשאיר הודעה ונחזור אליו`;
 
-חשוב:
-- דבר תמיד בעברית
-- היה אדיב ומקצועי
-- לפני קביעת פגישה, בדוק את הזמינות
+  return `
+${config.intro} ${businessName} - ${businessType}.
+${toneInstruction}
+
+${config.businessInfo}:
+- ${language === 'ar' ? 'اسم العمل' : language === 'en' ? 'Business Name' : 'שם העסק'}: ${businessName}
+- ${language === 'ar' ? 'نوع العمل' : language === 'en' ? 'Business Type' : 'סוג העסק'}: ${businessType}
+${businessPhone ? `- ${language === 'ar' ? 'هاتف' : language === 'en' ? 'Phone' : 'טלפון'}: ${businessPhone}` : ''}
+${businessHours ? `- ${language === 'ar' ? 'ساعات العمل' : language === 'en' ? 'Business Hours' : 'שעות פעילות'}: ${businessHours}` : ''}
+${servicesString}
+
+${faqString ? `${config.faq}:\n${faqString}` : ''}
+
+${customPrompt ? `${language === 'ar' ? 'تعليمات إضافية' : language === 'en' ? 'Additional Instructions' : 'הנחיות נוספות'}:\n${customPrompt}` : ''}
+
+${config.tasks}:
+${tasksContent}
+
+${config.important}:
+- ${config.speakIn}
+- ${language === 'ar' ? 'كن مهذباً ومحترفاً' : language === 'en' ? 'Be polite and professional' : 'היה אדיב ומקצועי'}
+- ${language === 'ar' ? 'قبل تحديد موعد، تحقق من التوفر' : language === 'en' ? 'Before scheduling, check availability' : 'לפני קביעת פגישה, בדוק את הזמינות'}
 `.trim();
 }
