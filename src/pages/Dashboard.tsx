@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
-import { Phone, Calendar, FileText, TrendingUp, Clock, Mic, ArrowLeft } from 'lucide-react';
+import { Phone, Calendar, FileText, TrendingUp, Clock, Mic, ArrowLeft, Languages } from 'lucide-react';
 import { format } from 'date-fns';
 import { he } from 'date-fns/locale';
 import { OnboardingStatusCard } from '@/components/onboarding/OnboardingStatusCard';
@@ -15,6 +15,11 @@ interface DashboardStats {
   todayCalls: number;
   upcomingAppointments: number;
   activeScripts: number;
+  languageStats: {
+    he: number;
+    ar: number;
+    en: number;
+  };
 }
 
 interface RecentCall {
@@ -40,6 +45,7 @@ export default function Dashboard() {
     todayCalls: 0,
     upcomingAppointments: 0,
     activeScripts: 0,
+    languageStats: { he: 0, ar: 0, en: 0 },
   });
   const [recentCalls, setRecentCalls] = useState<RecentCall[]>([]);
   const [upcomingAppointments, setUpcomingAppointments] = useState<UpcomingAppointment[]>([]);
@@ -80,18 +86,33 @@ export default function Dashboard() {
         .select('*', { count: 'exact', head: true })
         .eq('is_active', true);
 
-      // Fetch recent calls
+      // Fetch recent calls with language data
       const { data: calls } = await supabase
         .from('calls')
-        .select('id, caller_name, created_at, call_type, summary')
+        .select('id, caller_name, created_at, call_type, summary, language')
         .order('created_at', { ascending: false })
         .limit(5);
+
+      // Fetch all calls for language stats
+      const { data: allCalls } = await supabase
+        .from('calls')
+        .select('language');
+
+      // Calculate language stats
+      const languageStats = { he: 0, ar: 0, en: 0 };
+      allCalls?.forEach(call => {
+        const lang = call.language as keyof typeof languageStats;
+        if (lang && languageStats.hasOwnProperty(lang)) {
+          languageStats[lang]++;
+        }
+      });
 
       setStats({
         totalCalls: totalCalls || 0,
         todayCalls: todayCalls || 0,
         upcomingAppointments: appointmentsCount || 0,
         activeScripts: scriptsCount || 0,
+        languageStats,
       });
 
       setRecentCalls(calls || []);
@@ -134,6 +155,8 @@ export default function Dashboard() {
     },
   ];
 
+  const hasLanguageData = stats.languageStats.he > 0 || stats.languageStats.ar > 0 || stats.languageStats.en > 0;
+
   return (
     <AppLayout>
       <div className="space-y-6">
@@ -155,7 +178,6 @@ export default function Dashboard() {
           </Button>
         </div>
 
-        {/* Stats Grid */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           {statCards.map((stat) => (
             <Card key={stat.title} className="border-0 shadow-sm hover:shadow-md transition-shadow">
@@ -174,6 +196,46 @@ export default function Dashboard() {
             </Card>
           ))}
         </div>
+
+        {/* Language Stats */}
+        {hasLanguageData && (
+          <Card className="border-0 shadow-sm">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-lg flex items-center gap-2">
+                <Languages className="h-5 w-5" />
+                התפלגות שפות בשיחות
+              </CardTitle>
+              <CardDescription>שפות שזוהו אוטומטית בשיחות</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-center gap-6">
+                <div className="flex items-center gap-3">
+                  <span className="text-2xl">🇮🇱</span>
+                  <div>
+                    <p className="text-xl font-bold">{stats.languageStats.he}</p>
+                    <p className="text-sm text-muted-foreground">עברית</p>
+                  </div>
+                </div>
+                <div className="h-8 w-px bg-border" />
+                <div className="flex items-center gap-3">
+                  <span className="text-2xl">🇸🇦</span>
+                  <div>
+                    <p className="text-xl font-bold">{stats.languageStats.ar}</p>
+                    <p className="text-sm text-muted-foreground">ערבית</p>
+                  </div>
+                </div>
+                <div className="h-8 w-px bg-border" />
+                <div className="flex items-center gap-3">
+                  <span className="text-2xl">🇺🇸</span>
+                  <div>
+                    <p className="text-xl font-bold">{stats.languageStats.en}</p>
+                    <p className="text-sm text-muted-foreground">אנגלית</p>
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Recent Activity */}
         <div className="grid lg:grid-cols-2 gap-6">
