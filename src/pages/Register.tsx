@@ -39,7 +39,7 @@ export default function Register() {
       });
     } else {
       toast.success('נרשמת בהצלחה!');
-      navigate('/dashboard');
+      navigate('/onboarding');
     }
     
     setLoading(false);

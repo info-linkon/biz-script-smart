@@ -8,6 +8,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { Phone, Calendar, FileText, TrendingUp, Clock, Mic, ArrowLeft } from 'lucide-react';
 import { format } from 'date-fns';
 import { he } from 'date-fns/locale';
+import { OnboardingStatusCard } from '@/components/onboarding/OnboardingStatusCard';
 
 interface DashboardStats {
   totalCalls: number;
@@ -114,21 +115,21 @@ export default function Dashboard() {
       title: 'שיחות היום',
       value: stats.todayCalls,
       icon: TrendingUp,
-      color: 'bg-green-500/10 text-green-600',
+      color: 'bg-accent/10 text-accent-foreground',
       description: 'מאז חצות',
     },
     {
       title: 'פגישות קרובות',
       value: stats.upcomingAppointments,
       icon: Calendar,
-      color: 'bg-orange-500/10 text-orange-600',
+      color: 'bg-secondary text-secondary-foreground',
       description: 'בהמתנה',
     },
     {
       title: 'תסריטים פעילים',
       value: stats.activeScripts,
       icon: FileText,
-      color: 'bg-purple-500/10 text-purple-600',
+      color: 'bg-muted text-muted-foreground',
       description: 'פועלים כעת',
     },
   ];
@@ -136,6 +137,9 @@ export default function Dashboard() {
   return (
     <AppLayout>
       <div className="space-y-6">
+        {/* Onboarding Status - shows only if not complete */}
+        <OnboardingStatusCard />
+
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
@@ -260,8 +264,8 @@ export default function Dashboard() {
                       className="flex items-center gap-3 p-3 rounded-lg bg-secondary/50 hover:bg-secondary transition-colors cursor-pointer"
                       onClick={() => navigate('/calendar')}
                     >
-                      <div className="h-10 w-10 rounded-full bg-orange-500/10 flex items-center justify-center">
-                        <Clock className="h-4 w-4 text-orange-600" />
+                      <div className="h-10 w-10 rounded-full bg-accent/10 flex items-center justify-center">
+                        <Clock className="h-4 w-4 text-accent-foreground" />
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className="font-medium truncate">{apt.title}</p>
