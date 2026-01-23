@@ -81,7 +81,7 @@ serve(async (req) => {
 
     const finalGreeting = greeting_message || script?.greeting_message || `שלום! הגעתם ל${finalBusinessName}. איך אני יכול לעזור לכם?`;
 
-    // Create the Agent in ElevenLabs
+    // Create the Agent in ElevenLabs with auto language detection
     const agentPayload = {
       name: `Assistant - ${finalBusinessName}`,
       conversation_config: {
@@ -132,11 +132,17 @@ serve(async (req) => {
                   url: `${SUPABASE_URL}/functions/v1/elevenlabs-webhook`,
                   method: "POST",
                 }
+              },
+              {
+                type: "system",
+                name: "language_detection",
+                description: "Automatically detect and switch to the caller's language"
               }
             ]
           },
           first_message: finalGreeting,
-          language: script?.language || "he"
+          language: script?.language || "he",
+          supported_languages: ["he", "ar", "en"]
         },
         tts: {
           voice_id: voice_id || script?.voice_id || "21m00Tcm4TlvDq8ikWAM" // Default ElevenLabs voice
@@ -335,5 +341,6 @@ ${config.important}:
 - ${config.speakIn}
 - ${language === 'ar' ? 'كن مهذباً ومحترفاً' : language === 'en' ? 'Be polite and professional' : 'היה אדיב ומקצועי'}
 - ${language === 'ar' ? 'قبل تحديد موعد، تحقق من التوفر' : language === 'en' ? 'Before scheduling, check availability' : 'לפני קביעת פגישה, בדוק את הזמינות'}
+- ${language === 'he' ? 'אם הלקוח מדבר בשפה אחרת (אנגלית או ערבית), זהה את השפה והמשך לדבר איתו בשפה שלו' : language === 'ar' ? 'إذا تحدث العميل بلغة أخرى (العبرية أو الإنجليزية)، حدد اللغة واستمر في التحدث بلغته' : 'If the caller speaks Hebrew or Arabic, detect their language and continue the conversation in their language'}
 `.trim();
 }

@@ -190,11 +190,17 @@ serve(async (req) => {
                     },
                     required: ["customer_name", "customer_phone", "date", "time"]
                   }
+                },
+                {
+                  type: "system",
+                  name: "language_detection",
+                  description: "Automatically detect and switch to the caller's language"
                 }
               ]
             },
             first_message: greetingMessage,
-            language: script?.language || "he"
+            language: script?.language || "he",
+            supported_languages: ["he", "ar", "en"]
           },
           tts: {
             voice_id: script?.voice_id || "21m00Tcm4TlvDq8ikWAM"
@@ -444,5 +450,6 @@ ${config.important}:
 - ${config.speakIn}
 - ${language === 'ar' ? 'كن مهذباً ومحترفاً' : language === 'en' ? 'Be polite and professional' : 'היה אדיב ומקצועי'}
 - ${language === 'ar' ? 'قبل تحديد موعد، تحقق من التوفر' : language === 'en' ? 'Before scheduling, check availability' : 'לפני קביעת פגישה, בדוק את הזמינות'}
+- ${language === 'he' ? 'אם הלקוח מדבר בשפה אחרת (אנגלית או ערבית), זהה את השפה והמשך לדבר איתו בשפה שלו' : language === 'ar' ? 'إذا تحدث العميل بلغة أخرى (العبرية أو الإنجليزية)، حدد اللغة واستمر في التحدث بلغته' : 'If the caller speaks Hebrew or Arabic, detect their language and continue the conversation in their language'}
 `.trim();
 }

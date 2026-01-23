@@ -85,15 +85,23 @@ serve(async (req) => {
       script,
     });
 
-    // Build update payload
+    // Build update payload with auto language detection
     const updatePayload: any = {
       conversation_config: {
         agent: {
           prompt: {
             prompt: systemPrompt,
+            tools: [
+              {
+                type: "system",
+                name: "language_detection",
+                description: "Automatically detect and switch to the caller's language"
+              }
+            ]
           },
           first_message: script.greeting_message || `שלום! הגעתם ל${profile.business_name || 'העסק'}. איך אני יכול לעזור לכם?`,
-          language: script.language || "he"
+          language: script.language || "he",
+          supported_languages: ["he", "ar", "en"]
         }
       }
     };
@@ -213,5 +221,6 @@ ${customPrompt ? `הנחיות נוספות:\n${customPrompt}` : ''}
 - דבר תמיד בעברית
 - היה אדיב ומקצועי
 - לפני קביעת פגישה, בדוק את הזמינות
+- אם הלקוח מדבר בשפה אחרת (אנגלית או ערבית), זהה את השפה והמשך לדבר איתו בשפה שלו
 `.trim();
 }
