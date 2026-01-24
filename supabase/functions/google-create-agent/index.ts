@@ -44,7 +44,6 @@ async function getAccessToken(credentials: GoogleCredentials): Promise<string> {
   
   const signatureInput = `${base64Header}.${base64Payload}`;
   
-  // Import the private key
   const privateKeyPem = credentials.private_key;
   const pemContents = privateKeyPem
     .replace('-----BEGIN PRIVATE KEY-----', '')
@@ -72,7 +71,6 @@ async function getAccessToken(credentials: GoogleCredentials): Promise<string> {
   
   const jwt = `${signatureInput}.${base64Signature}`;
 
-  // Exchange JWT for access token
   const tokenResponse = await fetch(credentials.token_uri, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -173,12 +171,13 @@ serve(async (req) => {
     // Determine language settings
     const language = script?.language || 'he';
     const languageCode = language === 'he' ? 'he-IL' : language === 'ar' ? 'ar-XA' : 'en-US';
+    const dialogflowLanguageCode = language === 'he' ? 'he' : language === 'ar' ? 'ar' : 'en';
 
     // Build the system prompt
     const systemPrompt = buildSystemPrompt(profile, script, language);
 
-    // Create Dialogflow CX Agent
-    const location = 'global'; // or specific region like 'us-central1'
+    // Create Dialogflow CX Agent with Generative AI enabled
+    const location = 'global';
     const agentDisplayName = `${profile.business_name || 'Business'} Agent`;
     
     const agentPayload = {
@@ -195,7 +194,7 @@ serve(async (req) => {
           noSpeechTimeout: "5s",
           useTimeoutBasedEndpointing: true,
           models: {
-            [languageCode]: "chirp_2" // Using Chirp for better Hebrew/Arabic support
+            [languageCode]: "chirp_2"
           }
         }
       },
@@ -203,11 +202,15 @@ serve(async (req) => {
         synthesizeSpeechConfigs: {
           [languageCode]: {
             voice: {
-              name: language === 'he' ? 'he-IL-Wavenet-A' : language === 'ar' ? 'ar-XA-Wavenet-A' : 'en-US-Wavenet-D'
+              name: script?.voice_id || (language === 'he' ? 'he-IL-Wavenet-A' : language === 'ar' ? 'ar-XA-Wavenet-A' : 'en-US-Wavenet-D')
             },
             audioEncoding: "OUTPUT_AUDIO_ENCODING_LINEAR_16"
           }
         }
+      },
+      // Enable Generative AI features
+      genAppBuilderSettings: {
+        engine: `projects/${projectId}/locations/global/collections/default_collection/engines/default_search`
       }
     };
 
@@ -235,67 +238,7 @@ serve(async (req) => {
     const agentData = await createAgentResponse.json();
     const agentId = agentData.name.split('/').pop();
 
-    // Create the Default Start Flow with our system prompt
-    const defaultFlowName = `${agentData.name}/flows/00000000-0000-0000-0000-000000000000`;
-    
-    // Update the default flow with our configuration
-    const flowPayload = {
-      displayName: "Default Start Flow",
-      description: "Main conversation flow",
-      transitionRoutes: [],
-      eventHandlers: [
-        {
-          event: "sys.no-match-default",
-          triggerFulfillment: {
-            messages: [
-              {
-                text: {
-                  text: [language === 'he' ? 
-                    "סליחה, לא הבנתי. אפשר לחזור על זה?" : 
-                    language === 'ar' ? 
-                    "عذراً، لم أفهم. هل يمكنك إعادة ذلك؟" : 
-                    "Sorry, I didn't understand. Could you repeat that?"]
-                }
-              }
-            ]
-          }
-        },
-        {
-          event: "sys.no-input-default",
-          triggerFulfillment: {
-            messages: [
-              {
-                text: {
-                  text: [language === 'he' ? 
-                    "האם אתה עדיין שם?" : 
-                    language === 'ar' ? 
-                    "هل ما زلت هناك؟" : 
-                    "Are you still there?"]
-                }
-              }
-            ]
-          }
-        }
-      ],
-      nluSettings: {
-        modelType: "MODEL_TYPE_ADVANCED",
-        classificationThreshold: 0.3
-      }
-    };
-
-    await fetch(
-      `https://dialogflow.googleapis.com/v3/${defaultFlowName}`,
-      {
-        method: 'PATCH',
-        headers: {
-          'Authorization': `Bearer ${accessToken}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(flowPayload)
-      }
-    );
-
-    // Create webhook for scheduling
+    // Create webhook for business actions
     const webhookUrl = `${supabaseUrl}/functions/v1/google-webhook`;
     
     const webhookPayload = {
@@ -321,209 +264,21 @@ serve(async (req) => {
       }
     );
 
-    let webhookId = null;
+    let webhookName = null;
     if (webhookResponse.ok) {
       const webhookData = await webhookResponse.json();
-      webhookId = webhookData.name;
+      webhookName = webhookData.name;
     }
 
-    // Create intents
-    const intents = [
-      // Greeting intent
-      {
-        displayName: "greeting",
-        trainingPhrases: language === 'he' ? [
-          { parts: [{ text: "שלום" }], repeatCount: 1 },
-          { parts: [{ text: "היי" }], repeatCount: 1 },
-          { parts: [{ text: "בוקר טוב" }], repeatCount: 1 },
-          { parts: [{ text: "ערב טוב" }], repeatCount: 1 },
-          { parts: [{ text: "אהלן" }], repeatCount: 1 },
-          { parts: [{ text: "הלו" }], repeatCount: 1 },
-          { parts: [{ text: "צהריים טובים" }], repeatCount: 1 },
-          { parts: [{ text: "מה שלומך" }], repeatCount: 1 },
-          { parts: [{ text: "מה נשמע" }], repeatCount: 1 }
-        ] : language === 'ar' ? [
-          { parts: [{ text: "مرحبا" }], repeatCount: 1 },
-          { parts: [{ text: "السلام عليكم" }], repeatCount: 1 },
-          { parts: [{ text: "صباح الخير" }], repeatCount: 1 },
-          { parts: [{ text: "مساء الخير" }], repeatCount: 1 },
-          { parts: [{ text: "أهلا" }], repeatCount: 1 }
-        ] : [
-          { parts: [{ text: "Hello" }], repeatCount: 1 },
-          { parts: [{ text: "Hi" }], repeatCount: 1 },
-          { parts: [{ text: "Good morning" }], repeatCount: 1 },
-          { parts: [{ text: "Good evening" }], repeatCount: 1 },
-          { parts: [{ text: "Hey" }], repeatCount: 1 }
-        ]
-      },
-      // Schedule appointment intent - expanded
-      {
-        displayName: "schedule.appointment",
-        trainingPhrases: language === 'he' ? [
-          { parts: [{ text: "אני רוצה לקבוע פגישה" }], repeatCount: 1 },
-          { parts: [{ text: "אפשר לקבוע תור" }], repeatCount: 1 },
-          { parts: [{ text: "מתי יש לכם מקום פנוי" }], repeatCount: 1 },
-          { parts: [{ text: "אני רוצה להזמין תור" }], repeatCount: 1 },
-          { parts: [{ text: "אני צריך לקבוע תור" }], repeatCount: 1 },
-          { parts: [{ text: "יש תור פנוי" }], repeatCount: 1 },
-          { parts: [{ text: "אני רוצה לבוא אליכם" }], repeatCount: 1 },
-          { parts: [{ text: "איך אפשר לקבוע" }], repeatCount: 1 },
-          { parts: [{ text: "בוא נקבע פגישה" }], repeatCount: 1 },
-          { parts: [{ text: "אפשר להזמין" }], repeatCount: 1 },
-          { parts: [{ text: "רוצה לקבוע" }], repeatCount: 1 },
-          { parts: [{ text: "צריך תור" }], repeatCount: 1 },
-          { parts: [{ text: "אפשר לקבוע משהו" }], repeatCount: 1 },
-          { parts: [{ text: "אני מעוניין לקבוע" }], repeatCount: 1 },
-          { parts: [{ text: "אפשר להירשם" }], repeatCount: 1 }
-        ] : language === 'ar' ? [
-          { parts: [{ text: "أريد حجز موعد" }], repeatCount: 1 },
-          { parts: [{ text: "هل يمكنني حجز موعد" }], repeatCount: 1 },
-          { parts: [{ text: "أحتاج إلى موعد" }], repeatCount: 1 },
-          { parts: [{ text: "هل هناك موعد متاح" }], repeatCount: 1 },
-          { parts: [{ text: "أريد أن آتي إليكم" }], repeatCount: 1 }
-        ] : [
-          { parts: [{ text: "I want to schedule an appointment" }], repeatCount: 1 },
-          { parts: [{ text: "Can I book a meeting" }], repeatCount: 1 },
-          { parts: [{ text: "I need to make an appointment" }], repeatCount: 1 },
-          { parts: [{ text: "Is there an available slot" }], repeatCount: 1 },
-          { parts: [{ text: "I'd like to book" }], repeatCount: 1 },
-          { parts: [{ text: "Can I schedule something" }], repeatCount: 1 }
-        ],
-        parameters: [
-          {
-            id: "customer_name",
-            entityType: "@sys.person",
-            isList: false,
-            redact: false
-          },
-          {
-            id: "date_time",
-            entityType: "@sys.date-time",
-            isList: false,
-            redact: false
-          }
-        ]
-      },
-      // Check availability intent - expanded
-      {
-        displayName: "check.availability",
-        trainingPhrases: language === 'he' ? [
-          { parts: [{ text: "מתי אתם פנויים" }], repeatCount: 1 },
-          { parts: [{ text: "מה הזמינות שלכם" }], repeatCount: 1 },
-          { parts: [{ text: "מתי אפשר לבוא" }], repeatCount: 1 },
-          { parts: [{ text: "באיזה שעות אתם עובדים" }], repeatCount: 1 },
-          { parts: [{ text: "מה שעות הפעילות" }], repeatCount: 1 },
-          { parts: [{ text: "עד מתי אתם פתוחים" }], repeatCount: 1 },
-          { parts: [{ text: "מתי אתם פותחים" }], repeatCount: 1 },
-          { parts: [{ text: "באיזה ימים אתם עובדים" }], repeatCount: 1 },
-          { parts: [{ text: "אתם פתוחים היום" }], repeatCount: 1 },
-          { parts: [{ text: "אתם עובדים בשבת" }], repeatCount: 1 },
-          { parts: [{ text: "מתי אתם סוגרים" }], repeatCount: 1 },
-          { parts: [{ text: "אתם פתוחים עכשיו" }], repeatCount: 1 },
-          { parts: [{ text: "מה השעות שלכם" }], repeatCount: 1 },
-          { parts: [{ text: "באיזה שעות אתם פתוחים" }], repeatCount: 1 },
-          { parts: [{ text: "מתי אפשר להגיע" }], repeatCount: 1 },
-          { parts: [{ text: "יש לכם פנוי היום" }], repeatCount: 1 },
-          { parts: [{ text: "יש מקום היום" }], repeatCount: 1 },
-          { parts: [{ text: "אתם עובדים בערב" }], repeatCount: 1 },
-          { parts: [{ text: "אתם עובדים בבוקר" }], repeatCount: 1 }
-        ] : language === 'ar' ? [
-          { parts: [{ text: "متى تكونون متاحين" }], repeatCount: 1 },
-          { parts: [{ text: "ما هي أوقات العمل" }], repeatCount: 1 },
-          { parts: [{ text: "في أي ساعات تعملون" }], repeatCount: 1 },
-          { parts: [{ text: "هل أنتم مفتوحون اليوم" }], repeatCount: 1 },
-          { parts: [{ text: "متى تفتحون" }], repeatCount: 1 },
-          { parts: [{ text: "متى تغلقون" }], repeatCount: 1 }
-        ] : [
-          { parts: [{ text: "When are you available" }], repeatCount: 1 },
-          { parts: [{ text: "What are your working hours" }], repeatCount: 1 },
-          { parts: [{ text: "What time do you open" }], repeatCount: 1 },
-          { parts: [{ text: "What time do you close" }], repeatCount: 1 },
-          { parts: [{ text: "Are you open today" }], repeatCount: 1 },
-          { parts: [{ text: "Do you work on weekends" }], repeatCount: 1 }
-        ]
-      },
-      // Business info intent - expanded
-      {
-        displayName: "business.info",
-        trainingPhrases: language === 'he' ? [
-          { parts: [{ text: "מה השירותים שלכם" }], repeatCount: 1 },
-          { parts: [{ text: "ספר לי על העסק" }], repeatCount: 1 },
-          { parts: [{ text: "מה אתם מציעים" }], repeatCount: 1 },
-          { parts: [{ text: "איפה אתם נמצאים" }], repeatCount: 1 },
-          { parts: [{ text: "מה הכתובת שלכם" }], repeatCount: 1 },
-          { parts: [{ text: "כמה זה עולה" }], repeatCount: 1 },
-          { parts: [{ text: "מה המחירים" }], repeatCount: 1 },
-          { parts: [{ text: "איך מגיעים אליכם" }], repeatCount: 1 },
-          { parts: [{ text: "מה אתם עושים" }], repeatCount: 1 },
-          { parts: [{ text: "מה העסק שלכם" }], repeatCount: 1 },
-          { parts: [{ text: "איזה שירותים יש לכם" }], repeatCount: 1 },
-          { parts: [{ text: "מה אפשר לעשות אצלכם" }], repeatCount: 1 },
-          { parts: [{ text: "יש לכם מחירון" }], repeatCount: 1 },
-          { parts: [{ text: "כמה עולה טיפול" }], repeatCount: 1 }
-        ] : language === 'ar' ? [
-          { parts: [{ text: "ما هي خدماتكم" }], repeatCount: 1 },
-          { parts: [{ text: "أخبرني عن العمل" }], repeatCount: 1 },
-          { parts: [{ text: "أين أنتم" }], repeatCount: 1 },
-          { parts: [{ text: "ما هو العنوان" }], repeatCount: 1 },
-          { parts: [{ text: "كم يكلف" }], repeatCount: 1 },
-          { parts: [{ text: "ما هي الأسعار" }], repeatCount: 1 }
-        ] : [
-          { parts: [{ text: "What services do you offer" }], repeatCount: 1 },
-          { parts: [{ text: "Tell me about your business" }], repeatCount: 1 },
-          { parts: [{ text: "Where are you located" }], repeatCount: 1 },
-          { parts: [{ text: "What is your address" }], repeatCount: 1 },
-          { parts: [{ text: "How much does it cost" }], repeatCount: 1 },
-          { parts: [{ text: "What are your prices" }], repeatCount: 1 }
-        ]
-      },
-      // Thanks intent
-      {
-        displayName: "thanks",
-        trainingPhrases: language === 'he' ? [
-          { parts: [{ text: "תודה" }], repeatCount: 1 },
-          { parts: [{ text: "תודה רבה" }], repeatCount: 1 },
-          { parts: [{ text: "מעולה תודה" }], repeatCount: 1 },
-          { parts: [{ text: "אחלה תודה" }], repeatCount: 1 },
-          { parts: [{ text: "מושלם תודה" }], repeatCount: 1 },
-          { parts: [{ text: "יופי תודה" }], repeatCount: 1 }
-        ] : language === 'ar' ? [
-          { parts: [{ text: "شكرا" }], repeatCount: 1 },
-          { parts: [{ text: "شكرا جزيلا" }], repeatCount: 1 },
-          { parts: [{ text: "ممتاز شكرا" }], repeatCount: 1 }
-        ] : [
-          { parts: [{ text: "Thank you" }], repeatCount: 1 },
-          { parts: [{ text: "Thanks" }], repeatCount: 1 },
-          { parts: [{ text: "Great thanks" }], repeatCount: 1 }
-        ]
-      },
-      // Goodbye intent
-      {
-        displayName: "goodbye",
-        trainingPhrases: language === 'he' ? [
-          { parts: [{ text: "להתראות" }], repeatCount: 1 },
-          { parts: [{ text: "ביי" }], repeatCount: 1 },
-          { parts: [{ text: "יום טוב" }], repeatCount: 1 },
-          { parts: [{ text: "שיהיה יום טוב" }], repeatCount: 1 },
-          { parts: [{ text: "נתראה" }], repeatCount: 1 },
-          { parts: [{ text: "תהיה בריא" }], repeatCount: 1 },
-          { parts: [{ text: "כל טוב" }], repeatCount: 1 }
-        ] : language === 'ar' ? [
-          { parts: [{ text: "مع السلامة" }], repeatCount: 1 },
-          { parts: [{ text: "باي" }], repeatCount: 1 },
-          { parts: [{ text: "إلى اللقاء" }], repeatCount: 1 },
-          { parts: [{ text: "يوم سعيد" }], repeatCount: 1 }
-        ] : [
-          { parts: [{ text: "Goodbye" }], repeatCount: 1 },
-          { parts: [{ text: "Bye" }], repeatCount: 1 },
-          { parts: [{ text: "Have a good day" }], repeatCount: 1 },
-          { parts: [{ text: "See you" }], repeatCount: 1 }
-        ]
-      }
-    ];
+    // Get the default flow
+    const defaultFlowName = `${agentData.name}/flows/00000000-0000-0000-0000-000000000000`;
+    
+    // Create intents with responses
+    const intents = getIntentsWithRoutes(language, script);
+    const createdIntents: Record<string, string> = {};
 
     for (const intent of intents) {
-      await fetch(
+      const intentResponse = await fetch(
         `https://dialogflow.googleapis.com/v3/${agentData.name}/intents`,
         {
           method: 'POST',
@@ -531,13 +286,126 @@ serve(async (req) => {
             'Authorization': `Bearer ${accessToken}`,
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify(intent)
+          body: JSON.stringify({
+            displayName: intent.displayName,
+            trainingPhrases: intent.trainingPhrases
+          })
         }
       );
+      
+      if (intentResponse.ok) {
+        const intentData = await intentResponse.json();
+        createdIntents[intent.displayName] = intentData.name;
+      }
     }
 
-    // Create a generative agent with our system prompt
+    // Create FAQ intents from script
+    const faqIntents = createFaqIntents(script?.faq || [], language);
+    for (const faqIntent of faqIntents) {
+      const faqResponse = await fetch(
+        `https://dialogflow.googleapis.com/v3/${agentData.name}/intents`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            displayName: faqIntent.displayName,
+            trainingPhrases: faqIntent.trainingPhrases
+          })
+        }
+      );
+      
+      if (faqResponse.ok) {
+        const faqData = await faqResponse.json();
+        createdIntents[faqIntent.displayName] = faqData.name;
+      }
+    }
+
+    // Update the default flow with transition routes
+    const transitionRoutes = [];
+    
+    // Add routes for each intent
+    for (const intent of [...intents, ...faqIntents]) {
+      if (createdIntents[intent.displayName]) {
+        transitionRoutes.push({
+          intent: createdIntents[intent.displayName],
+          triggerFulfillment: {
+            messages: [
+              {
+                text: {
+                  text: [intent.response]
+                }
+              }
+            ],
+            // Add webhook for action intents
+            ...(intent.webhookTag && webhookName ? {
+              webhook: webhookName,
+              tag: intent.webhookTag
+            } : {})
+          }
+        });
+      }
+    }
+
+    // Update flow with routes and generative fallback
+    const flowPayload = {
+      displayName: "Default Start Flow",
+      description: "Main conversation flow with generative AI fallback",
+      transitionRoutes: transitionRoutes,
+      eventHandlers: [
+        {
+          event: "sys.no-match-default",
+          triggerFulfillment: {
+            // Use Generative Fallback instead of static message
+            setParameterActions: [
+              {
+                parameter: "use_generative",
+                value: true
+              }
+            ],
+            messages: []
+          }
+        },
+        {
+          event: "sys.no-input-default",
+          triggerFulfillment: {
+            messages: [
+              {
+                text: {
+                  text: [language === 'he' ? 
+                    "האם אתה עדיין שם? איך אוכל לעזור?" : 
+                    language === 'ar' ? 
+                    "هل ما زلت هناك؟ كيف يمكنني مساعدتك؟" : 
+                    "Are you still there? How can I help you?"]
+                }
+              }
+            ]
+          }
+        }
+      ],
+      nluSettings: {
+        modelType: "MODEL_TYPE_ADVANCED",
+        classificationThreshold: 0.3
+      }
+    };
+
+    await fetch(
+      `https://dialogflow.googleapis.com/v3/${defaultFlowName}`,
+      {
+        method: 'PATCH',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(flowPayload)
+      }
+    );
+
+    // Configure Generative Settings with LLM model
     const generativeSettings = {
+      languageCode: dialogflowLanguageCode,
       generativeSettings: {
         fallbackSettings: {
           selectedPrompt: systemPrompt,
@@ -548,12 +416,25 @@ serve(async (req) => {
               frozen: false
             }
           ]
+        },
+        generativeSafetySettings: {
+          bannedPhrases: []
+        },
+        knowledgeConnectorSettings: {
+          enabled: true,
+          triggerFulfillment: {
+            messages: []
+          }
+        },
+        llmModelSettings: {
+          model: "gemini-1.5-flash",
+          promptText: systemPrompt
         }
       }
     };
 
-    await fetch(
-      `https://dialogflow.googleapis.com/v3/${agentData.name}/generativeSettings?updateMask=fallbackSettings`,
+    const generativeResponse = await fetch(
+      `https://dialogflow.googleapis.com/v3/${agentData.name}/generativeSettings?updateMask=fallbackSettings,llmModelSettings,knowledgeConnectorSettings`,
       {
         method: 'PATCH',
         headers: {
@@ -561,6 +442,22 @@ serve(async (req) => {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(generativeSettings)
+      }
+    );
+
+    if (!generativeResponse.ok) {
+      console.error('Failed to set generative settings:', await generativeResponse.text());
+    }
+
+    // Train the agent
+    await fetch(
+      `https://dialogflow.googleapis.com/v3/${agentData.name}/flows/${defaultFlowName.split('/').pop()}:train`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        }
       }
     );
 
@@ -578,7 +475,10 @@ serve(async (req) => {
         success: true,
         agent_id: agentId,
         agent_name: agentData.name,
-        webhook_id: webhookId
+        webhook_id: webhookName,
+        intents_created: Object.keys(createdIntents).length,
+        faq_intents: faqIntents.length,
+        generative_enabled: true
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
@@ -591,6 +491,249 @@ serve(async (req) => {
     );
   }
 });
+
+interface IntentWithRoute {
+  displayName: string;
+  trainingPhrases: { parts: { text: string }[]; repeatCount: number }[];
+  response: string;
+  webhookTag?: string;
+}
+
+function getIntentsWithRoutes(language: string, script: any): IntentWithRoute[] {
+  const businessName = script?.business_name || 'העסק';
+  const greeting = script?.greeting_message || (language === 'he' ? 'שלום! איך אוכל לעזור לך היום?' : 'Hello! How can I help you today?');
+  
+  if (language === 'he') {
+    return [
+      {
+        displayName: "greeting",
+        trainingPhrases: [
+          { parts: [{ text: "שלום" }], repeatCount: 1 },
+          { parts: [{ text: "היי" }], repeatCount: 1 },
+          { parts: [{ text: "בוקר טוב" }], repeatCount: 1 },
+          { parts: [{ text: "ערב טוב" }], repeatCount: 1 },
+          { parts: [{ text: "אהלן" }], repeatCount: 1 },
+          { parts: [{ text: "הלו" }], repeatCount: 1 },
+          { parts: [{ text: "מה שלומך" }], repeatCount: 1 },
+          { parts: [{ text: "מה נשמע" }], repeatCount: 1 }
+        ],
+        response: greeting
+      },
+      {
+        displayName: "introduction",
+        trainingPhrases: [
+          { parts: [{ text: "שלום אני אמיר" }], repeatCount: 1 },
+          { parts: [{ text: "אני דוד" }], repeatCount: 1 },
+          { parts: [{ text: "קוראים לי יוסי" }], repeatCount: 1 },
+          { parts: [{ text: "שמי רונית" }], repeatCount: 1 },
+          { parts: [{ text: "אני משה" }], repeatCount: 1 },
+          { parts: [{ text: "זה דני" }], repeatCount: 1 },
+          { parts: [{ text: "אני שרה" }], repeatCount: 1 }
+        ],
+        response: "נעים מאוד! במה אוכל לעזור לך היום?"
+      },
+      {
+        displayName: "schedule.appointment",
+        trainingPhrases: [
+          { parts: [{ text: "אני רוצה לקבוע פגישה" }], repeatCount: 1 },
+          { parts: [{ text: "אפשר לקבוע תור" }], repeatCount: 1 },
+          { parts: [{ text: "אני רוצה להזמין תור" }], repeatCount: 1 },
+          { parts: [{ text: "אני צריך לקבוע תור" }], repeatCount: 1 },
+          { parts: [{ text: "בוא נקבע פגישה" }], repeatCount: 1 },
+          { parts: [{ text: "אפשר להזמין" }], repeatCount: 1 },
+          { parts: [{ text: "רוצה לקבוע" }], repeatCount: 1 },
+          { parts: [{ text: "צריך תור" }], repeatCount: 1 }
+        ],
+        response: "בשמחה! בוא נבדוק מתי יש לנו מקום פנוי. לאיזה יום ושעה היית רוצה?",
+        webhookTag: "check_availability"
+      },
+      {
+        displayName: "check.availability",
+        trainingPhrases: [
+          { parts: [{ text: "מתי אתם פנויים" }], repeatCount: 1 },
+          { parts: [{ text: "מה הזמינות שלכם" }], repeatCount: 1 },
+          { parts: [{ text: "מתי אפשר לבוא" }], repeatCount: 1 },
+          { parts: [{ text: "באיזה שעות אתם עובדים" }], repeatCount: 1 },
+          { parts: [{ text: "מה שעות הפעילות" }], repeatCount: 1 },
+          { parts: [{ text: "עד מתי אתם פתוחים" }], repeatCount: 1 },
+          { parts: [{ text: "מתי אתם פותחים" }], repeatCount: 1 },
+          { parts: [{ text: "אתם פתוחים היום" }], repeatCount: 1 },
+          { parts: [{ text: "יש לכם פנוי היום" }], repeatCount: 1 }
+        ],
+        response: "בוא נבדוק את הזמינות שלנו...",
+        webhookTag: "get_availability"
+      },
+      {
+        displayName: "business.info",
+        trainingPhrases: [
+          { parts: [{ text: "מה השירותים שלכם" }], repeatCount: 1 },
+          { parts: [{ text: "ספר לי על העסק" }], repeatCount: 1 },
+          { parts: [{ text: "מה אתם מציעים" }], repeatCount: 1 },
+          { parts: [{ text: "איפה אתם נמצאים" }], repeatCount: 1 },
+          { parts: [{ text: "מה הכתובת שלכם" }], repeatCount: 1 },
+          { parts: [{ text: "כמה זה עולה" }], repeatCount: 1 },
+          { parts: [{ text: "מה המחירים" }], repeatCount: 1 },
+          { parts: [{ text: "מה אתם עושים" }], repeatCount: 1 }
+        ],
+        response: "אשמח לספר לך על השירותים שלנו. איזה מידע אתה מחפש?"
+      },
+      {
+        displayName: "thanks",
+        trainingPhrases: [
+          { parts: [{ text: "תודה" }], repeatCount: 1 },
+          { parts: [{ text: "תודה רבה" }], repeatCount: 1 },
+          { parts: [{ text: "מעולה תודה" }], repeatCount: 1 },
+          { parts: [{ text: "אחלה תודה" }], repeatCount: 1 },
+          { parts: [{ text: "יופי תודה" }], repeatCount: 1 },
+          { parts: [{ text: "סבבה תודה" }], repeatCount: 1 }
+        ],
+        response: "בכיף! האם יש עוד משהו שאוכל לעזור?"
+      },
+      {
+        displayName: "goodbye",
+        trainingPhrases: [
+          { parts: [{ text: "להתראות" }], repeatCount: 1 },
+          { parts: [{ text: "ביי" }], repeatCount: 1 },
+          { parts: [{ text: "יום טוב" }], repeatCount: 1 },
+          { parts: [{ text: "שיהיה יום טוב" }], repeatCount: 1 },
+          { parts: [{ text: "נתראה" }], repeatCount: 1 },
+          { parts: [{ text: "כל טוב" }], repeatCount: 1 },
+          { parts: [{ text: "לא צריך יותר" }], repeatCount: 1 }
+        ],
+        response: "תודה שפנית אלינו! יום נעים ונשמח לראותך שוב."
+      },
+      {
+        displayName: "leave.message",
+        trainingPhrases: [
+          { parts: [{ text: "אני רוצה להשאיר הודעה" }], repeatCount: 1 },
+          { parts: [{ text: "אפשר להשאיר הודעה" }], repeatCount: 1 },
+          { parts: [{ text: "שיחזרו אליי" }], repeatCount: 1 },
+          { parts: [{ text: "תבקשו שיחזרו אליי" }], repeatCount: 1 }
+        ],
+        response: "בטח! מה ההודעה שתרצה להשאיר?",
+        webhookTag: "leave_message"
+      }
+    ];
+  } else if (language === 'ar') {
+    return [
+      {
+        displayName: "greeting",
+        trainingPhrases: [
+          { parts: [{ text: "مرحبا" }], repeatCount: 1 },
+          { parts: [{ text: "السلام عليكم" }], repeatCount: 1 },
+          { parts: [{ text: "صباح الخير" }], repeatCount: 1 },
+          { parts: [{ text: "مساء الخير" }], repeatCount: 1 },
+          { parts: [{ text: "أهلا" }], repeatCount: 1 }
+        ],
+        response: greeting
+      },
+      {
+        displayName: "schedule.appointment",
+        trainingPhrases: [
+          { parts: [{ text: "أريد حجز موعد" }], repeatCount: 1 },
+          { parts: [{ text: "هل يمكنني حجز موعد" }], repeatCount: 1 },
+          { parts: [{ text: "أحتاج إلى موعد" }], repeatCount: 1 }
+        ],
+        response: "بكل سرور! دعني أتحقق من التوفر. متى تفضل؟",
+        webhookTag: "check_availability"
+      },
+      {
+        displayName: "check.availability",
+        trainingPhrases: [
+          { parts: [{ text: "متى تكونون متاحين" }], repeatCount: 1 },
+          { parts: [{ text: "ما هي أوقات العمل" }], repeatCount: 1 },
+          { parts: [{ text: "هل أنتم مفتوحون اليوم" }], repeatCount: 1 }
+        ],
+        response: "دعني أتحقق من التوفر...",
+        webhookTag: "get_availability"
+      },
+      {
+        displayName: "thanks",
+        trainingPhrases: [
+          { parts: [{ text: "شكرا" }], repeatCount: 1 },
+          { parts: [{ text: "شكرا جزيلا" }], repeatCount: 1 }
+        ],
+        response: "على الرحب! هل هناك شيء آخر يمكنني مساعدتك به؟"
+      },
+      {
+        displayName: "goodbye",
+        trainingPhrases: [
+          { parts: [{ text: "مع السلامة" }], repeatCount: 1 },
+          { parts: [{ text: "باي" }], repeatCount: 1 },
+          { parts: [{ text: "إلى اللقاء" }], repeatCount: 1 }
+        ],
+        response: "شكرا لتواصلك معنا! يوم سعيد!"
+      }
+    ];
+  } else {
+    return [
+      {
+        displayName: "greeting",
+        trainingPhrases: [
+          { parts: [{ text: "Hello" }], repeatCount: 1 },
+          { parts: [{ text: "Hi" }], repeatCount: 1 },
+          { parts: [{ text: "Good morning" }], repeatCount: 1 },
+          { parts: [{ text: "Good evening" }], repeatCount: 1 },
+          { parts: [{ text: "Hey" }], repeatCount: 1 }
+        ],
+        response: greeting
+      },
+      {
+        displayName: "schedule.appointment",
+        trainingPhrases: [
+          { parts: [{ text: "I want to schedule an appointment" }], repeatCount: 1 },
+          { parts: [{ text: "Can I book a meeting" }], repeatCount: 1 },
+          { parts: [{ text: "I need to make an appointment" }], repeatCount: 1 }
+        ],
+        response: "Sure! Let me check availability. What day and time works for you?",
+        webhookTag: "check_availability"
+      },
+      {
+        displayName: "check.availability",
+        trainingPhrases: [
+          { parts: [{ text: "When are you available" }], repeatCount: 1 },
+          { parts: [{ text: "What are your working hours" }], repeatCount: 1 },
+          { parts: [{ text: "Are you open today" }], repeatCount: 1 }
+        ],
+        response: "Let me check our availability...",
+        webhookTag: "get_availability"
+      },
+      {
+        displayName: "thanks",
+        trainingPhrases: [
+          { parts: [{ text: "Thank you" }], repeatCount: 1 },
+          { parts: [{ text: "Thanks" }], repeatCount: 1 }
+        ],
+        response: "You're welcome! Is there anything else I can help with?"
+      },
+      {
+        displayName: "goodbye",
+        trainingPhrases: [
+          { parts: [{ text: "Goodbye" }], repeatCount: 1 },
+          { parts: [{ text: "Bye" }], repeatCount: 1 },
+          { parts: [{ text: "Have a good day" }], repeatCount: 1 }
+        ],
+        response: "Thank you for contacting us! Have a great day!"
+      }
+    ];
+  }
+}
+
+function createFaqIntents(faq: any[], language: string): IntentWithRoute[] {
+  if (!faq || faq.length === 0) return [];
+  
+  return faq.map((item: any, index: number) => ({
+    displayName: `faq.${index + 1}`,
+    trainingPhrases: [
+      { parts: [{ text: item.question }], repeatCount: 1 },
+      // Add variations of the question
+      ...(item.question.length > 10 ? [
+        { parts: [{ text: item.question.split(' ').slice(0, 3).join(' ') }], repeatCount: 1 }
+      ] : [])
+    ],
+    response: item.answer
+  }));
+}
 
 function buildSystemPrompt(profile: any, script: any, language: string): string {
   const businessName = profile?.business_name || 'העסק';
@@ -625,68 +768,87 @@ function buildSystemPrompt(profile: any, script: any, language: string): string 
   if (language === 'he') {
     return `אתה עוזר וירטואלי של ${businessName}, ${businessType}.
 
+## סגנון התשובה
 ${toneInstructions.he[tone] || toneInstructions.he.friendly}
 
-מידע על העסק:
+## מידע על העסק
 - שם העסק: ${businessName}
 - סוג העסק: ${businessType}
 ${businessHours ? `- שעות פעילות: ${businessHours}` : ''}
 ${services.length > 0 ? `- שירותים: ${services.join(', ')}` : ''}
+${profile?.address ? `- כתובת: ${profile.address}` : ''}
+${profile?.phone ? `- טלפון: ${profile.phone}` : ''}
 
-${faq.length > 0 ? `שאלות נפוצות:\n${faq.map((f: any) => `ש: ${f.question}\nת: ${f.answer}`).join('\n\n')}` : ''}
+${faq.length > 0 ? `## שאלות נפוצות\n${faq.map((f: any) => `ש: ${f.question}\nת: ${f.answer}`).join('\n\n')}` : ''}
 
-${customPrompt ? `הוראות נוספות:\n${customPrompt}` : ''}
+${customPrompt ? `## הוראות מיוחדות\n${customPrompt}` : ''}
 
-משימות עיקריות:
-1. ברך את הלקוח בחביבות
-2. ענה על שאלות לגבי העסק והשירותים
-3. עזור לקבוע פגישות - בדוק זמינות ואסוף פרטי לקוח
-4. אם אינך יודע תשובה, הצע ללקוח להשאיר הודעה
+## משימות עיקריות
+1. ברך את הלקוח בחמימות ושאל במה אתה יכול לעזור
+2. ענה על שאלות לגבי העסק והשירותים בהתבסס על המידע שלמעלה
+3. עזור לקבוע פגישות - בדוק זמינות ואסוף פרטי לקוח (שם, טלפון, סוג שירות)
+4. אם הלקוח מציג את עצמו, ברך אותו בשמו
+5. אם אינך יודע תשובה, הצע ללקוח להשאיר הודעה
 
-חשוב מאוד:
+## כללים חשובים
 - דבר תמיד בעברית באותיות עבריות בלבד (א-ת)
 - אסור בשום פנים לכתוב עברית באותיות לטיניות
-- היה קצר וענייני
-- היה אדיב ומקצועי`;
+- היה קצר וענייני - משפט או שניים לכל תשובה
+- היה אדיב ומקצועי
+- אל תמציא מידע שלא נמסר לך
+- השתמש בשם הלקוח אם הוא הזדהה`;
   } else if (language === 'ar') {
     return `أنت المساعد الافتراضي لـ ${businessName}، ${businessType}.
 
+## أسلوب الإجابة
 ${toneInstructions.ar[tone] || toneInstructions.ar.friendly}
 
-معلومات العمل:
+## معلومات العمل
 - اسم العمل: ${businessName}
 - نوع العمل: ${businessType}
 ${businessHours ? `- ساعات العمل: ${businessHours}` : ''}
 ${services.length > 0 ? `- الخدمات: ${services.join(', ')}` : ''}
 
-${faq.length > 0 ? `الأسئلة الشائعة:\n${faq.map((f: any) => `س: ${f.question}\nج: ${f.answer}`).join('\n\n')}` : ''}
+${faq.length > 0 ? `## الأسئلة الشائعة\n${faq.map((f: any) => `س: ${f.question}\nج: ${f.answer}`).join('\n\n')}` : ''}
 
-${customPrompt ? `تعليمات إضافية:\n${customPrompt}` : ''}
+${customPrompt ? `## تعليمات خاصة\n${customPrompt}` : ''}
 
-المهام الرئيسية:
-1. رحب بالعميل بلطف
+## المهام الرئيسية
+1. رحب بالعميل بلطف واسأل كيف يمكنك المساعدة
 2. أجب عن الأسئلة المتعلقة بالعمل والخدمات
 3. ساعد في حجز المواعيد
-4. إذا كنت لا تعرف الإجابة، اقترح على العميل ترك رسالة`;
+4. إذا كنت لا تعرف الإجابة، اقترح على العميل ترك رسالة
+
+## قواعد مهمة
+- تحدث بالعربية فقط
+- كن موجزاً ومباشراً
+- كن مهذباً ومحترفاً`;
   } else {
     return `You are the virtual assistant of ${businessName}, a ${businessType}.
 
+## Response Style
 ${toneInstructions.en[tone] || toneInstructions.en.friendly}
 
-Business Information:
+## Business Information
 - Business Name: ${businessName}
 - Business Type: ${businessType}
 ${businessHours ? `- Business Hours: ${businessHours}` : ''}
 ${services.length > 0 ? `- Services: ${services.join(', ')}` : ''}
 
-${faq.length > 0 ? `FAQ:\n${faq.map((f: any) => `Q: ${f.question}\nA: ${f.answer}`).join('\n\n')}` : ''}
+${faq.length > 0 ? `## FAQ\n${faq.map((f: any) => `Q: ${f.question}\nA: ${f.answer}`).join('\n\n')}` : ''}
 
-${customPrompt ? `Additional Instructions:\n${customPrompt}` : ''}
+${customPrompt ? `## Special Instructions\n${customPrompt}` : ''}
 
-Main Tasks:
-1. Greet the customer warmly
-2. Answer questions about the business and services
-3. Help schedule appointments
-4. If you don't know the answer, offer to take a message`;
+## Main Tasks
+1. Greet the customer warmly and ask how you can help
+2. Answer questions about the business and services based on the information above
+3. Help schedule appointments - check availability and collect customer details
+4. If you don't know the answer, offer to take a message
+
+## Important Rules
+- Keep responses brief - one or two sentences
+- Be polite and professional
+- Don't make up information you weren't given
+- Use the customer's name if they introduced themselves`;
   }
 }

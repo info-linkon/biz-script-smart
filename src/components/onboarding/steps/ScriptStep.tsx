@@ -89,6 +89,49 @@ export function ScriptStep({ initialData, onComplete, onBack }: ScriptStepProps)
     }));
   };
 
+  const syncAgentWithScript = async (scriptId: string) => {
+    try {
+      // Get session for auth
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+
+      // Get user profile to check if agent exists
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('dialogflow_agent_id')
+        .eq('user_id', user!.id)
+        .single();
+
+      if (!profile?.dialogflow_agent_id) {
+        console.log('No agent to sync');
+        return;
+      }
+
+      // Call google-update-agent to sync settings
+      const updateResponse = await supabase.functions.invoke('google-update-agent', {
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+        },
+      });
+
+      if (updateResponse.error) {
+        console.error('Error syncing agent:', updateResponse.error);
+      } else {
+        console.log('Agent synced successfully:', updateResponse.data);
+        
+        // Also update intents
+        await supabase.functions.invoke('google-update-intents', {
+          headers: {
+            Authorization: `Bearer ${session.access_token}`,
+          },
+        });
+      }
+    } catch (error) {
+      console.error('Error syncing agent:', error);
+      // Don't show error to user, this is a background operation
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -112,6 +155,8 @@ export function ScriptStep({ initialData, onComplete, onBack }: ScriptStepProps)
         updated_at: new Date().toISOString(),
       };
 
+      let savedScriptId = existingScriptId;
+
       if (existingScriptId) {
         // Update existing script
         const { error } = await supabase
@@ -122,14 +167,22 @@ export function ScriptStep({ initialData, onComplete, onBack }: ScriptStepProps)
         if (error) throw error;
       } else {
         // Create new script
-        const { error } = await supabase
+        const { data, error } = await supabase
           .from('scripts')
           .insert({
             ...scriptData,
             user_id: user.id,
-          });
+          })
+          .select('id')
+          .single();
 
         if (error) throw error;
+        savedScriptId = data?.id;
+      }
+
+      // Auto-sync agent with new script settings
+      if (savedScriptId) {
+        syncAgentWithScript(savedScriptId);
       }
 
       toast.success('התסריט נשמר בהצלחה');
