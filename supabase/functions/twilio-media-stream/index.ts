@@ -216,11 +216,6 @@ async function transcribeAudio(
   // Use V2 API with Chirp 2 model for better accuracy
   const sttUrl = `https://speech.googleapis.com/v2/projects/${projectId}/locations/global/recognizers/_:recognize`;
   
-  // Build phrase hints for better business term recognition
-  const phraseSets = phraseHints.length > 0 ? [{
-    phrases: phraseHints.map(phrase => ({ value: phrase, boost: 15 }))
-  }] : [];
-  
   const response = await fetch(sttUrl, {
     method: 'POST',
     headers: {
@@ -243,8 +238,6 @@ async function transcribeAudio(
           enableAutomaticPunctuation: true,
           enableWordTimeOffsets: false,
         },
-        // Speech adaptation for business terms
-        adaptation: phraseSets.length > 0 ? { phraseSets } : undefined,
       },
       content: mulawAudioBase64,
     }),
@@ -258,6 +251,16 @@ async function transcribeAudio(
     const transcript = data.results[0].alternatives[0].transcript;
     const confidence = data.results[0].alternatives[0].confidence || 0;
     let detectedLanguage = data.results[0].languageCode || primaryLanguage;
+    
+    // Hebrew word indicators - override Arabic detection when Hebrew greeting detected
+    const hebrewIndicators = ['שלום', 'היי', 'בוקר', 'ערב', 'אלו', 'מה', 'איך', 'כן', 'לא', 'תודה', 'בבקשה'];
+    const containsHebrew = hebrewIndicators.some(word => transcript.includes(word));
+    
+    // Override Arabic detection to Hebrew if Hebrew words found
+    if (containsHebrew && detectedLanguage.startsWith('ar')) {
+      console.log('🔄 Detected Hebrew greeting in Arabic transcript, switching to he-IL');
+      detectedLanguage = 'he-IL';
+    }
     
     // Confidence filter: default to Hebrew if non-Hebrew with low confidence
     if (detectedLanguage !== 'he-IL' && confidence < 0.5) {
@@ -525,7 +528,7 @@ function getVoiceForLanguage(
     console.log('🎤 Low confidence or no language, using Hebrew voice');
     return { 
       languageCode: 'he-IL', 
-      name: voiceGender === 'FEMALE' ? 'he-IL-Studio-A' : 'he-IL-Studio-B' 
+      name: voiceGender === 'FEMALE' ? 'he-IL-Wavenet-A' : 'he-IL-Wavenet-B' 
     };
   }
   
@@ -534,7 +537,7 @@ function getVoiceForLanguage(
   if (lang.startsWith('en')) {
     return { 
       languageCode: 'en-US', 
-      name: voiceGender === 'FEMALE' ? 'en-US-Studio-O' : 'en-US-Studio-M' 
+      name: voiceGender === 'FEMALE' ? 'en-US-Wavenet-F' : 'en-US-Wavenet-D' 
     };
   } else if (lang.startsWith('ar')) {
     return { 
@@ -544,7 +547,7 @@ function getVoiceForLanguage(
   } else {
     return { 
       languageCode: 'he-IL', 
-      name: voiceGender === 'FEMALE' ? 'he-IL-Studio-A' : 'he-IL-Studio-B' 
+      name: voiceGender === 'FEMALE' ? 'he-IL-Wavenet-A' : 'he-IL-Wavenet-B' 
     };
   }
 }
