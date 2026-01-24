@@ -62,6 +62,9 @@ interface ConversationState {
   noiseFloor: number;
   noiseFloorSamples: number;
   totalBufferBytes: number;
+  // Multi-language detection
+  detectedLanguage: string;
+  voiceGender: 'FEMALE' | 'MALE';
 }
 
 // MULAW decode table for proper energy calculation
@@ -223,17 +226,18 @@ function linear16ToMulaw(linear16Data: Int16Array): Uint8Array {
   return mulaw;
 }
 
-// Perform speech-to-text using Google Cloud - SEND MULAW DIRECTLY
+// Perform speech-to-text using Google Cloud with multi-language detection
 async function transcribeAudio(
   mulawAudioBase64: string, 
   accessToken: string, 
-  projectId: string
-): Promise<string | null> {
+  projectId: string,
+  primaryLanguage: string = 'he-IL'
+): Promise<{ transcript: string | null; detectedLanguage: string }> {
   console.log('🎤 Transcribing audio, MULAW base64 length:', mulawAudioBase64.length);
   
   const sttUrl = `https://speech.googleapis.com/v1/speech:recognize`;
   
-  // Send MULAW directly - no conversion needed!
+  // Multi-language detection: primary language + alternatives
   const response = await fetch(sttUrl, {
     method: 'POST',
     headers: {
@@ -242,9 +246,11 @@ async function transcribeAudio(
     },
     body: JSON.stringify({
       config: {
-        encoding: 'MULAW', // Direct MULAW - no conversion!
+        encoding: 'MULAW',
         sampleRateHertz: 8000,
-        languageCode: 'he-IL',
+        languageCode: primaryLanguage,
+        // Enable multi-language detection
+        alternativeLanguageCodes: ['en-US', 'ar-XA'],
         model: 'telephony_short',
         useEnhanced: true,
       },
@@ -258,13 +264,17 @@ async function transcribeAudio(
   console.log('📝 STT response:', JSON.stringify(data));
 
   if (data.results && data.results[0]?.alternatives?.[0]?.transcript) {
-    return data.results[0].alternatives[0].transcript;
+    const transcript = data.results[0].alternatives[0].transcript;
+    // Get detected language from response (falls back to primary)
+    const detectedLanguage = data.results[0].languageCode || primaryLanguage;
+    console.log('🗣️ Detected language:', detectedLanguage);
+    return { transcript, detectedLanguage };
   }
   
-  return null;
+  return { transcript: null, detectedLanguage: primaryLanguage };
 }
 
-// Query Dialogflow CX with context
+// Query Dialogflow CX with context and detected language
 async function queryDialogflow(
   text: string,
   sessionId: string,
@@ -272,7 +282,8 @@ async function queryDialogflow(
   accessToken: string,
   projectId: string,
   conversationHistory: { role: string; text: string }[] = [],
-  customerName: string | null = null
+  customerName: string | null = null,
+  detectedLanguage: string = 'he-IL'
 ): Promise<{ response: string; extractedName?: string; extractedPhone?: string }> {
   console.log('🤖 Querying Dialogflow with:', text);
   
@@ -302,7 +313,8 @@ async function queryDialogflow(
     body: JSON.stringify({
       queryInput: {
         text: { text },
-        languageCode: 'he',
+        // Use detected language for Dialogflow (extract base language code)
+        languageCode: detectedLanguage?.split('-')[0] || 'he',
       },
       queryParams: {
         parameters: queryParams
@@ -362,13 +374,41 @@ async function queryDialogflow(
   return { response: responseText, extractedName, extractedPhone };
 }
 
-// Synthesize speech using Google TTS with Studio/Journey voices (Chirp 3)
+// Get voice configuration based on detected language
+function getVoiceForLanguage(detectedLanguage: string, voiceGender: 'FEMALE' | 'MALE'): { languageCode: string; name: string } {
+  const lang = detectedLanguage.toLowerCase();
+  
+  if (lang.startsWith('en')) {
+    return { 
+      languageCode: 'en-US', 
+      name: voiceGender === 'FEMALE' ? 'en-US-Studio-O' : 'en-US-Studio-M' 
+    };
+  } else if (lang.startsWith('ar')) {
+    return { 
+      languageCode: 'ar-XA', 
+      name: voiceGender === 'FEMALE' ? 'ar-XA-Wavenet-A' : 'ar-XA-Wavenet-B' 
+    };
+  } else {
+    // Default to Hebrew
+    return { 
+      languageCode: 'he-IL', 
+      name: voiceGender === 'FEMALE' ? 'he-IL-Studio-A' : 'he-IL-Studio-B' 
+    };
+  }
+}
+
+// Synthesize speech using Google TTS with language-aware voice selection
 async function synthesizeSpeech(
   text: string,
   accessToken: string,
-  voiceGender: 'FEMALE' | 'MALE' = 'FEMALE'
+  voiceGender: 'FEMALE' | 'MALE' = 'FEMALE',
+  detectedLanguage: string = 'he-IL'
 ): Promise<string> {
-  console.log('🔊 Synthesizing speech:', text);
+  console.log('🔊 Synthesizing speech in', detectedLanguage, ':', text);
+  
+  // Get appropriate voice for detected language
+  const voiceConfig = getVoiceForLanguage(detectedLanguage, voiceGender);
+  console.log('🎤 Using voice:', voiceConfig.name, 'for language:', voiceConfig.languageCode);
   
   // Use v1beta1 for Studio voices (Chirp 3 - highest quality)
   const ttsUrl = 'https://texttospeech.googleapis.com/v1beta1/text:synthesize';
@@ -391,16 +431,13 @@ async function synthesizeSpeech(
     body: JSON.stringify({
       input: { ssml: ssmlText },
       voice: {
-        // Studio voices (Chirp 3) - highest quality, most natural
-        languageCode: 'he-IL',
-        name: voiceGender === 'FEMALE' ? 'he-IL-Studio-A' : 'he-IL-Studio-B',
+        languageCode: voiceConfig.languageCode,
+        name: voiceConfig.name,
       },
       audioConfig: {
         audioEncoding: 'MULAW',
         sampleRateHertz: 8000,
-        // Enhanced audio profile for telephony
         effectsProfileId: ['telephony-class-application'],
-        // Slightly slower for clarity
         speakingRate: 0.95,
       },
     }),
@@ -412,6 +449,13 @@ async function synthesizeSpeech(
   if (data.error) {
     console.log('⚠️ Studio voice not available, falling back to Wavenet:', data.error.message);
     
+    // Fallback voice names
+    const fallbackVoice = detectedLanguage.startsWith('en') 
+      ? 'en-US-Wavenet-F' 
+      : detectedLanguage.startsWith('ar')
+        ? 'ar-XA-Wavenet-A'
+        : 'he-IL-Wavenet-A';
+    
     const fallbackResponse = await fetch('https://texttospeech.googleapis.com/v1/text:synthesize', {
       method: 'POST',
       headers: {
@@ -421,8 +465,8 @@ async function synthesizeSpeech(
       body: JSON.stringify({
         input: { text },
         voice: {
-          languageCode: 'he-IL',
-          name: 'he-IL-Wavenet-A',
+          languageCode: voiceConfig.languageCode,
+          name: fallbackVoice,
         },
         audioConfig: {
           audioEncoding: 'MULAW',
@@ -514,11 +558,19 @@ async function processAudioBuffer(
       accessToken = await getAccessToken(state.credentials);
     }
     
-    // Transcribe
-    const transcript = await transcribeAudio(mulawBase64, accessToken, state.projectId);
-    console.log('📝 Transcript:', transcript);
+    // Transcribe with multi-language detection
+    const { transcript, detectedLanguage } = await transcribeAudio(
+      mulawBase64, 
+      accessToken, 
+      state.projectId,
+      state.language === 'he' ? 'he-IL' : state.language === 'ar' ? 'ar-XA' : 'en-US'
+    );
+    console.log('📝 Transcript:', transcript, '| Language:', detectedLanguage);
     
     if (transcript) {
+      // Update detected language in state for future TTS
+      state.detectedLanguage = detectedLanguage;
+      
       // Add user message to conversation history
       state.conversationHistory.push({
         role: 'user',
@@ -527,7 +579,7 @@ async function processAudioBuffer(
       });
       state.turnCount++;
       
-      // Query Dialogflow with context
+      // Query Dialogflow with context and detected language
       const result = await queryDialogflow(
         transcript,
         state.sessionId,
@@ -535,7 +587,8 @@ async function processAudioBuffer(
         accessToken,
         state.projectId,
         state.conversationHistory,
-        state.customerName
+        state.customerName,
+        detectedLanguage
       );
       
       // Update customer info if extracted
@@ -560,8 +613,13 @@ async function processAudioBuffer(
       // Mark agent as speaking before sending audio
       state.isAgentSpeaking = true;
       
-      // Synthesize and send response
-      const responseAudio = await synthesizeSpeech(result.response, accessToken);
+      // Synthesize and send response in the detected language
+      const responseAudio = await synthesizeSpeech(
+        result.response, 
+        accessToken, 
+        state.voiceGender,
+        detectedLanguage
+      );
       sendAudioToTwilio(socket, state.streamSid, responseAudio);
     } else {
       console.log('⚠️ No transcript returned from STT');
@@ -682,6 +740,9 @@ serve(async (req) => {
               noiseFloor: 500, // Initial estimate, will calibrate
               noiseFloorSamples: 0,
               totalBufferBytes: 0,
+              // Multi-language detection - initialize with script language
+              detectedLanguage: script?.language === 'he' ? 'he-IL' : script?.language === 'ar' ? 'ar-XA' : 'en-US',
+              voiceGender: 'FEMALE',
             };
             
             // Send initial greeting
