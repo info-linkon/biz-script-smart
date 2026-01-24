@@ -352,14 +352,25 @@ async function queryDialogflow(
   return { response: responseText, extractedName, extractedPhone };
 }
 
-// Synthesize speech using Google TTS
+// Synthesize speech using Google TTS with Studio/Journey voices (Chirp 3)
 async function synthesizeSpeech(
   text: string,
-  accessToken: string
+  accessToken: string,
+  voiceGender: 'FEMALE' | 'MALE' = 'FEMALE'
 ): Promise<string> {
   console.log('Synthesizing speech:', text);
   
-  const ttsUrl = 'https://texttospeech.googleapis.com/v1/text:synthesize';
+  // Use v1beta1 for Studio voices (Chirp 3 - highest quality)
+  const ttsUrl = 'https://texttospeech.googleapis.com/v1beta1/text:synthesize';
+  
+  // Add SSML for more natural speech with pauses and prosody
+  const ssmlText = `<speak>
+    <prosody rate="medium" pitch="0st">
+      ${text.replace(/\./g, '.<break time="300ms"/>')
+            .replace(/,/g, ',<break time="150ms"/>')
+            .replace(/\?/g, '?<break time="400ms"/>')}
+    </prosody>
+  </speak>`;
   
   const response = await fetch(ttsUrl, {
     method: 'POST',
@@ -368,25 +379,60 @@ async function synthesizeSpeech(
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      input: { text },
+      input: { ssml: ssmlText },
       voice: {
+        // Studio voices (Chirp 3) - highest quality, most natural
         languageCode: 'he-IL',
-        name: 'he-IL-Wavenet-A',
+        name: voiceGender === 'FEMALE' ? 'he-IL-Studio-A' : 'he-IL-Studio-B',
       },
       audioConfig: {
         audioEncoding: 'MULAW',
         sampleRateHertz: 8000,
+        // Enhanced audio profile for telephony
+        effectsProfileId: ['telephony-class-application'],
+        // Slightly slower for clarity
+        speakingRate: 0.95,
       },
     }),
   });
 
   const data = await response.json();
   
+  // Fallback to Wavenet if Studio not available
+  if (data.error) {
+    console.log('Studio voice not available, falling back to Wavenet:', data.error.message);
+    
+    const fallbackResponse = await fetch('https://texttospeech.googleapis.com/v1/text:synthesize', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        input: { text },
+        voice: {
+          languageCode: 'he-IL',
+          name: 'he-IL-Wavenet-A',
+        },
+        audioConfig: {
+          audioEncoding: 'MULAW',
+          sampleRateHertz: 8000,
+          effectsProfileId: ['telephony-class-application'],
+        },
+      }),
+    });
+    
+    const fallbackData = await fallbackResponse.json();
+    if (fallbackData.audioContent) {
+      return fallbackData.audioContent;
+    }
+  }
+  
   if (data.audioContent) {
     return data.audioContent;
   }
   
-  throw new Error('Failed to synthesize speech');
+  throw new Error('Failed to synthesize speech: ' + JSON.stringify(data));
 }
 
 // Send audio to Twilio via WebSocket
