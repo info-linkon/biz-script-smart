@@ -272,6 +272,7 @@ export type Database = {
       }
       scripts: {
         Row: {
+          agent_voice_gender: string | null
           business_hours: string | null
           created_at: string
           custom_prompt: string | null
@@ -288,6 +289,7 @@ export type Database = {
           voice_id: string | null
         }
         Insert: {
+          agent_voice_gender?: string | null
           business_hours?: string | null
           created_at?: string
           custom_prompt?: string | null
@@ -304,6 +306,7 @@ export type Database = {
           voice_id?: string | null
         }
         Update: {
+          agent_voice_gender?: string | null
           business_hours?: string | null
           created_at?: string
           custom_prompt?: string | null
