@@ -72,3 +72,6 @@ verify_jwt = false
 
 [functions.twilio-dialogflow-bridge]
 verify_jwt = false
+
+[functions.process-recording]
+verify_jwt = false
