@@ -93,12 +93,12 @@ serve(async (req) => {
         // The greeting will be sent via WebSocket, but we say a brief intro first
         const streamUrl = `wss://${supabaseUrl.replace('https://', '')}/functions/v1/twilio-media-stream`;
         
-        // Using track="both_tracks" for bidirectional audio streaming
-        // This is the correct Twilio attribute for two-way WebSocket audio
+        // <Connect><Stream> is bidirectional by default
+        // Audio can be sent back through the same WebSocket using media events
         twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Connect>
-    <Stream url="${streamUrl}" track="both_tracks">
+    <Stream url="${streamUrl}">
       <Parameter name="userId" value="${userId}" />
       <Parameter name="agentId" value="${profile?.dialogflow_agent_id || ''}" />
       <Parameter name="language" value="${language}" />
