@@ -1,11 +1,12 @@
 import { supabase } from '@/integrations/supabase/client';
 
-export type VoiceProvider = 'elevenlabs' | 'vapi';
+export type VoiceProvider = 'elevenlabs' | 'vapi' | 'google';
 
 export interface VoiceProviderConfig {
   provider: VoiceProvider;
   elevenlabs_agent_id?: string;
   vapi_assistant_id?: string;
+  dialogflow_agent_id?: string;
 }
 
 /**
@@ -14,7 +15,7 @@ export interface VoiceProviderConfig {
 export async function getVoiceProvider(userId: string): Promise<VoiceProviderConfig> {
   const { data: profile, error } = await supabase
     .from('profiles')
-    .select('voice_provider, elevenlabs_agent_id, vapi_assistant_id')
+    .select('voice_provider, elevenlabs_agent_id, vapi_assistant_id, dialogflow_agent_id')
     .eq('user_id', userId)
     .single();
 
@@ -27,6 +28,7 @@ export async function getVoiceProvider(userId: string): Promise<VoiceProviderCon
     provider: (profile.voice_provider as VoiceProvider) || 'elevenlabs',
     elevenlabs_agent_id: profile.elevenlabs_agent_id || undefined,
     vapi_assistant_id: profile.vapi_assistant_id || undefined,
+    dialogflow_agent_id: (profile as any).dialogflow_agent_id || undefined,
   };
 }
 
@@ -58,11 +60,29 @@ export async function getVoiceProviderCredentials(provider: VoiceProvider): Prom
   // Vapi
   public_key?: string;
   assistant_id?: string;
+  // Google Dialogflow
+  project_id?: string;
+  access_token?: string;
   // Common
   agent_id?: string;
   error?: string;
 }> {
-  if (provider === 'vapi') {
+  if (provider === 'google') {
+    const { data, error } = await supabase.functions.invoke('google-get-credentials');
+    
+    if (error || !data) {
+      console.error('Error getting Google credentials:', error);
+      return { success: false, provider, error: error?.message || 'Failed to get Google credentials' };
+    }
+
+    return {
+      success: true,
+      provider: 'google',
+      project_id: data.project_id,
+      agent_id: data.agent_id,
+      access_token: data.access_token,
+    };
+  } else if (provider === 'vapi') {
     const { data, error } = await supabase.functions.invoke('vapi-get-token');
     
     if (error || !data) {
@@ -113,7 +133,13 @@ export async function createOrUpdateAgent(
   assistant_id?: string;
   error?: string;
 }> {
-  const functionName = provider === 'vapi' ? 'vapi-create-assistant' : 'elevenlabs-create-agent';
+  const functionMap: Record<VoiceProvider, string> = {
+    elevenlabs: 'elevenlabs-create-agent',
+    vapi: 'vapi-create-assistant',
+    google: 'google-create-agent',
+  };
+  
+  const functionName = functionMap[provider];
   
   const { data, error } = await supabase.functions.invoke(functionName, {
     body: options || {}
@@ -147,7 +173,13 @@ export async function updateAgent(
   success: boolean;
   error?: string;
 }> {
-  const functionName = provider === 'vapi' ? 'vapi-update-assistant' : 'elevenlabs-update-agent';
+  const functionMap: Record<VoiceProvider, string> = {
+    elevenlabs: 'elevenlabs-update-agent',
+    vapi: 'vapi-update-assistant',
+    google: 'google-update-agent',
+  };
+  
+  const functionName = functionMap[provider];
   
   const { data, error } = await supabase.functions.invoke(functionName, {
     body: {
@@ -178,6 +210,17 @@ export function getProviderInfo(provider: VoiceProvider): {
   pros: string[];
   cons: string[];
 } {
+  if (provider === 'google') {
+    return {
+      name: 'Google Dialogflow CX',
+      nameEn: 'Google Dialogflow CX',
+      description: 'זיהוי דיבור מעולה בעברית עם Chirp 3',
+      icon: '🎯',
+      pros: ['זיהוי עברית מצוין (Chirp 3)', 'עלות נמוכה', 'אמינות גבוהה', 'תמיכה בערבית'],
+      cons: ['הגדרה מורכבת יותר', 'פחות קולות זמינים'],
+    };
+  }
+  
   if (provider === 'vapi') {
     return {
       name: 'Vapi.ai',
@@ -197,4 +240,32 @@ export function getProviderInfo(provider: VoiceProvider): {
     pros: ['מהיר מאוד', 'עלות נמוכה יותר', 'קול טבעי'],
     cons: ['תמיכה מוגבלת בעברית'],
   };
+}
+
+/**
+ * Get all available providers with their info
+ */
+export function getAllProviders(): Array<{ provider: VoiceProvider; info: ReturnType<typeof getProviderInfo> }> {
+  const providers: VoiceProvider[] = ['elevenlabs', 'vapi', 'google'];
+  return providers.map(p => ({
+    provider: p,
+    info: getProviderInfo(p)
+  }));
+}
+
+/**
+ * Check if an agent exists for the given provider
+ */
+export async function hasAgent(userId: string, provider: VoiceProvider): Promise<boolean> {
+  const config = await getVoiceProvider(userId);
+  
+  switch (provider) {
+    case 'google':
+      return !!config.dialogflow_agent_id;
+    case 'vapi':
+      return !!config.vapi_assistant_id;
+    case 'elevenlabs':
+    default:
+      return !!config.elevenlabs_agent_id;
+  }
 }
