@@ -790,18 +790,23 @@ async function processAudioBuffer(
           timestamp: Date.now()
         };
         
-        await supabase.from('calls')
+        // Find any non-completed call for this user (handles status variations)
+        const { error: updateError } = await supabase.from('calls')
           .update({ 
             transcript: state.conversationHistory,
             customer_name: state.customerName,
             customer_topic: state.customerTopic,
           })
           .eq('user_id', state.userId)
-          .eq('status', 'in_progress')
+          .neq('status', 'completed')  // Match any non-completed status
           .order('created_at', { ascending: false })
           .limit(1);
-          
-        console.log('💾 Saved transcript to database');
+        
+        if (updateError) {
+          console.error('❌ Database update failed:', updateError.message);
+        } else {
+          console.log('💾 Saved transcript to database - history:', state.conversationHistory.length, 'entries');
+        }
       } catch (dbErr) {
         console.error('⚠️ Error saving transcript:', dbErr);
       }
@@ -1203,8 +1208,8 @@ ${state.conversationHistory.map(h => `${h.role === 'user' ? 'לקוח' : 'נצי
                   ? Math.floor((Date.now() - state.conversationHistory[0].timestamp) / 1000)
                   : 0;
                 
-                // Update call record with final data
-                await supabase.from('calls')
+                // Update call record with final data - match any non-completed status
+                const { error: finalError } = await supabase.from('calls')
                   .update({ 
                     status: 'completed',
                     transcript: state.conversationHistory,
@@ -1215,11 +1220,15 @@ ${state.conversationHistory.map(h => `${h.role === 'user' ? 'לקוח' : 'נצי
                     summary: callSummary || null,
                   })
                   .eq('user_id', state.userId)
-                  .eq('status', 'in_progress')
+                  .neq('status', 'completed')  // Match any non-completed status
                   .order('created_at', { ascending: false })
                   .limit(1);
-                  
-                console.log('✅ Call finalized - Duration:', callDuration, 's, Turns:', state.turnCount);
+                
+                if (finalError) {
+                  console.error('❌ Failed to finalize call:', finalError.message);
+                } else {
+                  console.log('✅ Call finalized - Duration:', callDuration, 's, Turns:', state.turnCount, ', Summary:', callSummary ? 'Yes' : 'No');
+                }
               } catch (finalErr) {
                 console.error('⚠️ Error finalizing call:', finalErr);
               }
