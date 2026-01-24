@@ -67,6 +67,7 @@ interface ConversationState {
   // Multi-language detection
   detectedLanguage: string;
   voiceGender: 'FEMALE' | 'MALE';
+  sttConfidence: number;  // Track STT confidence for TTS voice selection
 }
 
 // MULAW decode table for proper energy calculation
@@ -234,7 +235,7 @@ async function transcribeAudio(
   accessToken: string, 
   projectId: string,
   primaryLanguage: string = 'he-IL'
-): Promise<{ transcript: string | null; detectedLanguage: string }> {
+): Promise<{ transcript: string | null; detectedLanguage: string; confidence: number }> {
   console.log('🎤 Transcribing audio, MULAW base64 length:', mulawAudioBase64.length);
   
   const sttUrl = `https://speech.googleapis.com/v1/speech:recognize`;
@@ -267,13 +268,21 @@ async function transcribeAudio(
 
   if (data.results && data.results[0]?.alternatives?.[0]?.transcript) {
     const transcript = data.results[0].alternatives[0].transcript;
-    // Get detected language from response (falls back to primary)
-    const detectedLanguage = data.results[0].languageCode || primaryLanguage;
-    console.log('🗣️ Detected language:', detectedLanguage);
-    return { transcript, detectedLanguage };
+    const confidence = data.results[0].alternatives[0].confidence || 0;
+    let detectedLanguage = data.results[0].languageCode || primaryLanguage;
+    
+    // CONFIDENCE FILTER: If non-Hebrew with low confidence, default to Hebrew
+    if (detectedLanguage !== 'he-IL' && confidence < 0.5) {
+      console.log(`⚠️ Low confidence (${(confidence*100).toFixed(0)}%) for ${detectedLanguage}, defaulting to he-IL`);
+      detectedLanguage = 'he-IL';
+    }
+    
+    console.log('🗣️ Transcript:', transcript, '| Language:', detectedLanguage, '| Confidence:', (confidence*100).toFixed(0) + '%');
+    return { transcript, detectedLanguage, confidence };
   }
   
-  return { transcript: null, detectedLanguage: primaryLanguage };
+  console.log('❌ No transcript in response');
+  return { transcript: null, detectedLanguage: primaryLanguage, confidence: 0 };
 }
 
 // Query Dialogflow CX with context and detected language
@@ -394,14 +403,39 @@ async function queryDialogflow(
 
   let responseText = 'סליחה, לא הבנתי. אפשר לחזור?';
   
-  if (data.queryResult?.responseMessages) {
-    for (const msg of data.queryResult.responseMessages) {
-      if (msg.text?.text?.[0]) {
-        responseText = msg.text.text[0];
-        break;
+    if (data.queryResult?.responseMessages) {
+      for (const msg of data.queryResult.responseMessages) {
+        if (msg.text?.text?.[0]) {
+          responseText = msg.text.text[0];
+          break;
+        }
       }
     }
-  }
+    
+    // Filter unwanted "AI assistant" responses
+    const unwantedPhrases = [
+      'בתור עוזר AI',
+      'כעוזר AI',
+      'אני עוזר AI',
+      'בתור עוזר בינה מלאכותית',
+      'as an AI assistant',
+      'as an AI',
+      'I am an AI'
+    ];
+    
+    const containsUnwanted = unwantedPhrases.some(phrase => 
+      responseText.toLowerCase().includes(phrase.toLowerCase())
+    );
+    
+    if (containsUnwanted) {
+      console.log('⚠️ Filtering unwanted AI response:', responseText.substring(0, 80));
+      // Replace with friendly alternative
+      if (customerName) {
+        responseText = `שלום ${customerName}! איך אוכל לעזור לך היום?`;
+      } else {
+        responseText = 'שלום! איך אוכל לעזור לך היום?';
+      }
+    }
   
   // Personalize response with customer name if available
   if (customerName && responseText.includes('לקוח')) {
@@ -412,9 +446,24 @@ async function queryDialogflow(
 }
 
 // Get voice configuration based on detected language
-function getVoiceForLanguage(detectedLanguage: string, voiceGender: 'FEMALE' | 'MALE'): { languageCode: string; name: string } {
+function getVoiceForLanguage(
+  detectedLanguage: string, 
+  voiceGender: 'FEMALE' | 'MALE',
+  sttConfidence: number = 1.0
+): { languageCode: string; name: string } {
+  
+  // If low confidence - always use Hebrew voice
+  if (sttConfidence < 0.5 || !detectedLanguage) {
+    console.log('🎤 Low confidence or no language, using Hebrew voice');
+    return { 
+      languageCode: 'he-IL', 
+      name: voiceGender === 'FEMALE' ? 'he-IL-Studio-A' : 'he-IL-Studio-B' 
+    };
+  }
+  
   const lang = detectedLanguage.toLowerCase();
   
+  // Only use detected language if confidence is high
   if (lang.startsWith('en')) {
     return { 
       languageCode: 'en-US', 
@@ -439,13 +488,14 @@ async function synthesizeSpeech(
   text: string,
   accessToken: string,
   voiceGender: 'FEMALE' | 'MALE' = 'FEMALE',
-  detectedLanguage: string = 'he-IL'
+  detectedLanguage: string = 'he-IL',
+  sttConfidence: number = 1.0
 ): Promise<string> {
   console.log('🔊 Synthesizing speech in', detectedLanguage, ':', text);
   
-  // Get appropriate voice for detected language
-  const voiceConfig = getVoiceForLanguage(detectedLanguage, voiceGender);
-  console.log('🎤 Using voice:', voiceConfig.name, 'for language:', voiceConfig.languageCode);
+  // Get appropriate voice for detected language WITH confidence check
+  const voiceConfig = getVoiceForLanguage(detectedLanguage, voiceGender, sttConfidence);
+  console.log('🎤 Using voice:', voiceConfig.name, 'for language:', voiceConfig.languageCode, '| STT confidence:', (sttConfidence*100).toFixed(0) + '%');
   
   // Use v1beta1 for Studio voices (Chirp 3 - highest quality)
   const ttsUrl = 'https://texttospeech.googleapis.com/v1beta1/text:synthesize';
@@ -596,13 +646,16 @@ async function processAudioBuffer(
     }
     
     // Transcribe with multi-language detection
-    const { transcript, detectedLanguage } = await transcribeAudio(
+    const { transcript, detectedLanguage, confidence } = await transcribeAudio(
       mulawBase64, 
       accessToken, 
       state.projectId,
       state.language === 'he' ? 'he-IL' : state.language === 'ar' ? 'ar-XA' : 'en-US'
     );
-    console.log('📝 Transcript:', transcript, '| Language:', detectedLanguage);
+    console.log('📝 Transcript:', transcript, '| Language:', detectedLanguage, '| Confidence:', (confidence*100).toFixed(0) + '%');
+    
+    // Store confidence in state for TTS voice selection
+    state.sttConfidence = confidence;
     
     if (transcript) {
       // Update detected language in state for future TTS
@@ -661,12 +714,13 @@ async function processAudioBuffer(
       // Mark agent as speaking before sending audio
       state.isAgentSpeaking = true;
       
-      // Synthesize and send response in the detected language
+      // Synthesize and send response in the detected language (with confidence for voice selection)
       const responseAudio = await synthesizeSpeech(
         result.response, 
         accessToken, 
         state.voiceGender,
-        detectedLanguage
+        detectedLanguage,
+        state.sttConfidence
       );
       sendAudioToTwilio(socket, state.streamSid, responseAudio);
     } else {
@@ -793,6 +847,7 @@ serve(async (req) => {
               // Multi-language detection - initialize with script language
               detectedLanguage: script?.language === 'he' ? 'he-IL' : script?.language === 'ar' ? 'ar-XA' : 'en-US',
               voiceGender: 'FEMALE',
+              sttConfidence: 1.0,  // Default to high confidence
             };
             
             // Send initial greeting
