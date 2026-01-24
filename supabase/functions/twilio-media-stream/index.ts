@@ -630,11 +630,11 @@ function getVoiceForLanguage(
     }
   };
   
-  // Fallback to Wavenet if Chirp 3 not available
-  const wavenetFallback = {
-    hebrew: { FEMALE: 'he-IL-Wavenet-A', MALE: 'he-IL-Wavenet-B' },
-    arabic: { FEMALE: 'ar-XA-Wavenet-A', MALE: 'ar-XA-Wavenet-B' },
-    english: { FEMALE: 'en-US-Neural2-F', MALE: 'en-US-Neural2-D' }
+  // Fallback to Neural2/Journey if Chirp 3 HD not available (higher quality than Wavenet)
+  const neural2Fallback = {
+    hebrew: { FEMALE: 'he-IL-Neural2-A', MALE: 'he-IL-Neural2-D' },
+    arabic: { FEMALE: 'ar-XA-Neural2-A', MALE: 'ar-XA-Neural2-D' },
+    english: { FEMALE: 'en-US-Journey-F', MALE: 'en-US-Journey-D' }  // Journey is best for English
   };
   
   // If low confidence - always use Hebrew voice
@@ -711,22 +711,28 @@ async function synthesizeSpeech(
         sampleRateHertz: 8000,
         effectsProfileId: ['telephony-class-application'],
         speakingRate: 1.0,   // Natural speaking rate for Chirp 3
-        pitch: 0.3,          // Warm, natural tone
+        // NOTE: No pitch parameter - Chirp3-HD doesn't support it!
       },
     }),
   });
 
   const data = await response.json();
   
-  // Fallback to Wavenet if Chirp 3 HD not available
+  // Fallback to Neural2/Journey if Chirp 3 HD not available (much better than Wavenet!)
   if (data.error) {
-    console.log('⚠️ Chirp3-HD voice not available, falling back to Wavenet:', data.error.message);
+    console.log('⚠️ Chirp3-HD unavailable, trying Neural2/Journey fallback:', data.error.message);
     
-    const fallbackVoice = detectedLanguage.startsWith('en') 
-      ? 'en-US-Neural2-F' 
-      : detectedLanguage.startsWith('ar')
-        ? 'ar-XA-Wavenet-A'
-        : 'he-IL-Wavenet-A';
+    // Neural2/Journey fallback mapping - higher quality than Wavenet
+    const fallbackMap: Record<string, Record<string, string>> = {
+      'he-IL': { FEMALE: 'he-IL-Neural2-A', MALE: 'he-IL-Neural2-D' },
+      'ar-XA': { FEMALE: 'ar-XA-Neural2-A', MALE: 'ar-XA-Neural2-D' },
+      'en-US': { FEMALE: 'en-US-Journey-F', MALE: 'en-US-Journey-D' },  // Journey is Google's best English
+    };
+    
+    const langFallback = fallbackMap[voiceConfig.languageCode] || fallbackMap['he-IL'];
+    const fallbackVoice = langFallback[voiceGender] || langFallback['FEMALE'];
+    
+    console.log('🔄 Using fallback voice:', fallbackVoice);
     
     const fallbackResponse = await fetch('https://texttospeech.googleapis.com/v1/text:synthesize', {
       method: 'POST',
@@ -745,14 +751,17 @@ async function synthesizeSpeech(
           sampleRateHertz: 8000,
           effectsProfileId: ['telephony-class-application'],
           speakingRate: 1.0,
-          pitch: 0.3,
+          pitch: 0.2,  // Neural2/Journey DO support pitch - slight warmth
         },
       }),
     });
     
     const fallbackData = await fallbackResponse.json();
     if (fallbackData.audioContent) {
+      console.log('✅ Neural2/Journey fallback succeeded');
       return fallbackData.audioContent;
+    } else {
+      console.error('❌ Fallback also failed:', fallbackData.error);
     }
   }
   
