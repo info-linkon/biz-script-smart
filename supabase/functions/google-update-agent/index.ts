@@ -159,8 +159,12 @@ serve(async (req) => {
     // Build updated system prompt
     const systemPrompt = buildSystemPrompt(profile, script, language);
 
-    // Update generative settings with new prompt
+    // Map language code for Dialogflow
+    const languageCode = language === 'he' ? 'he' : language === 'ar' ? 'ar' : 'en';
+
+    // Update generative settings with new prompt and language code
     const generativeSettings = {
+      languageCode: languageCode,
       generativeSettings: {
         fallbackSettings: {
           selectedPrompt: systemPrompt,

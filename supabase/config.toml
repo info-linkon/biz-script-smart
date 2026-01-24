@@ -1,4 +1,7 @@
 project_id = "aibwnlcsbwhprbnavpgo"
+[functions.admin-sync-agent]
+verify_jwt = false
+
 
 [functions.elevenlabs-get-available-numbers]
 verify_jwt = false
