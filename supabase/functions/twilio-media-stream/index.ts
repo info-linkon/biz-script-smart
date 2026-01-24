@@ -203,7 +203,7 @@ async function getAccessToken(credentials: any): Promise<string> {
   return tokenData.access_token;
 }
 
-// ===== UPGRADED: Speech-to-Text using Google Cloud V2 API with Chirp 2 =====
+// ===== STABLE: Speech-to-Text using Google Cloud V1 API with phone_call model =====
 async function transcribeAudio(
   mulawAudioBase64: string, 
   accessToken: string, 
@@ -211,117 +211,94 @@ async function transcribeAudio(
   primaryLanguage: string = 'he-IL',
   phraseHints: string[] = []
 ): Promise<{ transcript: string | null; detectedLanguage: string; confidence: number }> {
-  console.log('🎤 Transcribing with Chirp 2, MULAW base64 length:', mulawAudioBase64.length);
+  console.log('🎤 Transcribing with V1 phone_call model, audio length:', mulawAudioBase64.length);
   
-  // Use V2 API with Chirp 2 model for better accuracy
-  const sttUrl = `https://speech.googleapis.com/v2/projects/${projectId}/locations/global/recognizers/_:recognize`;
+  // Use stable V1 API with enhanced phone_call model
+  const sttUrl = 'https://speech.googleapis.com/v1/speech:recognize';
   
-  const response = await fetch(sttUrl, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${accessToken}`,
-      'Content-Type': 'application/json',
+  // Build speech contexts for better business term recognition
+  const speechContexts = phraseHints.length > 0 ? [{
+    phrases: phraseHints.slice(0, 500), // Max 500 phrases
+    boost: 15
+  }] : [];
+  
+  const requestBody: any = {
+    config: {
+      encoding: 'MULAW',
+      sampleRateHertz: 8000,
+      languageCode: primaryLanguage,
+      alternativeLanguageCodes: ['en-US', 'ar-XA'],
+      model: 'phone_call', // Optimized for telephony
+      useEnhanced: true,   // Enhanced model for better accuracy
+      enableAutomaticPunctuation: true,
+      profanityFilter: false,
     },
-    body: JSON.stringify({
-      config: {
-        // Auto decoding for MULAW
-        explicitDecodingConfig: {
-          encoding: 'MULAW',
-          sampleRateHertz: 8000,
-          audioChannelCount: 1,
-        },
-        // Multi-language detection with Hebrew primary
-        languageCodes: [primaryLanguage, 'en-US', 'ar-XA'],
-        // Chirp 2 model - best for Hebrew
-        model: 'chirp_2',
-        features: {
-          enableAutomaticPunctuation: true,
-          enableWordTimeOffsets: false,
-        },
-      },
+    audio: {
       content: mulawAudioBase64,
-    }),
-  });
-
-  const data = await response.json();
-  console.log('📝 Chirp 2 STT response:', JSON.stringify(data).substring(0, 500));
-
-  // Parse V2 API response format
-  if (data.results && data.results[0]?.alternatives?.[0]?.transcript) {
-    const transcript = data.results[0].alternatives[0].transcript;
-    const confidence = data.results[0].alternatives[0].confidence || 0;
-    let detectedLanguage = data.results[0].languageCode || primaryLanguage;
-    
-    // Hebrew word indicators - override Arabic detection when Hebrew greeting detected
-    const hebrewIndicators = ['שלום', 'היי', 'בוקר', 'ערב', 'אלו', 'מה', 'איך', 'כן', 'לא', 'תודה', 'בבקשה'];
-    const containsHebrew = hebrewIndicators.some(word => transcript.includes(word));
-    
-    // Override Arabic detection to Hebrew if Hebrew words found
-    if (containsHebrew && detectedLanguage.startsWith('ar')) {
-      console.log('🔄 Detected Hebrew greeting in Arabic transcript, switching to he-IL');
-      detectedLanguage = 'he-IL';
-    }
-    
-    // Confidence filter: default to Hebrew if non-Hebrew with low confidence
-    if (detectedLanguage !== 'he-IL' && confidence < 0.5) {
-      console.log(`⚠️ Low confidence (${(confidence*100).toFixed(0)}%) for ${detectedLanguage}, defaulting to he-IL`);
-      detectedLanguage = 'he-IL';
-    }
-    
-    console.log('🗣️ Chirp 2 Transcript:', transcript, '| Language:', detectedLanguage, '| Confidence:', (confidence*100).toFixed(0) + '%');
-    return { transcript, detectedLanguage, confidence };
-  }
-  
-  // Fallback to V1 API if V2 fails
-  console.log('⚠️ V2 API failed, falling back to V1');
-  return transcribeAudioV1Fallback(mulawAudioBase64, accessToken, primaryLanguage);
-}
-
-// Fallback to V1 API
-async function transcribeAudioV1Fallback(
-  mulawAudioBase64: string, 
-  accessToken: string, 
-  primaryLanguage: string
-): Promise<{ transcript: string | null; detectedLanguage: string; confidence: number }> {
-  const sttUrl = `https://speech.googleapis.com/v1/speech:recognize`;
-  
-  const response = await fetch(sttUrl, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${accessToken}`,
-      'Content-Type': 'application/json',
     },
-    body: JSON.stringify({
-      config: {
-        encoding: 'MULAW',
-        sampleRateHertz: 8000,
-        languageCode: primaryLanguage,
-        alternativeLanguageCodes: ['en-US', 'ar-XA'],
-        model: 'telephony_short',
-        useEnhanced: true,
-      },
-      audio: {
-        content: mulawAudioBase64,
-      },
-    }),
-  });
-
-  const data = await response.json();
+  };
   
-  if (data.results && data.results[0]?.alternatives?.[0]?.transcript) {
-    const transcript = data.results[0].alternatives[0].transcript;
-    const confidence = data.results[0].alternatives[0].confidence || 0;
-    let detectedLanguage = data.results[0].languageCode || primaryLanguage;
-    
-    if (detectedLanguage !== 'he-IL' && confidence < 0.5) {
-      detectedLanguage = 'he-IL';
-    }
-    
-    return { transcript, detectedLanguage, confidence };
+  // Add speech contexts only if we have hints
+  if (speechContexts.length > 0) {
+    requestBody.config.speechContexts = speechContexts;
+    console.log('📋 Using', phraseHints.length, 'phrase hints for recognition');
   }
   
-  return { transcript: null, detectedLanguage: primaryLanguage, confidence: 0 };
+  try {
+    const response = await fetch(sttUrl, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(requestBody),
+    });
+
+    const data = await response.json();
+    console.log('📝 V1 STT Response:', JSON.stringify(data).substring(0, 800));
+
+    // Check for API errors
+    if (data.error) {
+      console.error('❌ STT API Error:', data.error.message);
+      return { transcript: null, detectedLanguage: primaryLanguage, confidence: 0 };
+    }
+
+    // Parse response
+    if (data.results && data.results[0]?.alternatives?.[0]?.transcript) {
+      const transcript = data.results[0].alternatives[0].transcript;
+      const confidence = data.results[0].alternatives[0].confidence || 0.8;
+      let detectedLanguage = data.results[0].languageCode || primaryLanguage;
+      
+      // Hebrew word indicators - override Arabic detection when Hebrew greeting detected
+      const hebrewIndicators = ['שלום', 'היי', 'בוקר', 'ערב', 'אלו', 'מה', 'איך', 'כן', 'לא', 'תודה', 'בבקשה', 'סליחה', 'רגע'];
+      const containsHebrew = hebrewIndicators.some(word => transcript.includes(word));
+      
+      // Override Arabic detection to Hebrew if Hebrew words found
+      if (containsHebrew && detectedLanguage.startsWith('ar')) {
+        console.log('🔄 Detected Hebrew in Arabic transcript, switching to he-IL');
+        detectedLanguage = 'he-IL';
+      }
+      
+      // Confidence filter: default to Hebrew if non-Hebrew with low confidence
+      if (detectedLanguage !== 'he-IL' && confidence < 0.5) {
+        console.log(`⚠️ Low confidence (${(confidence*100).toFixed(0)}%) for ${detectedLanguage}, defaulting to he-IL`);
+        detectedLanguage = 'he-IL';
+      }
+      
+      console.log('✅ Transcript:', transcript, '| Lang:', detectedLanguage, '| Confidence:', (confidence*100).toFixed(0) + '%');
+      return { transcript, detectedLanguage, confidence };
+    }
+    
+    // No results found
+    console.log('⚠️ No speech detected in audio');
+    return { transcript: null, detectedLanguage: primaryLanguage, confidence: 0 };
+    
+  } catch (error) {
+    console.error('❌ STT fetch error:', error);
+    return { transcript: null, detectedLanguage: primaryLanguage, confidence: 0 };
+  }
 }
+
 
 // ===== UPGRADED: Lovable AI Response (replaces Dialogflow LLM) =====
 async function getAIResponse(
