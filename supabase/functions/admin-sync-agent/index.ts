@@ -200,39 +200,54 @@ function buildSystemPrompt(profile: any, script: any, language: string): string 
     formal: 'דבר בצורה רשמית ומכובדת'
   };
 
-  return `אתה עוזר וירטואלי של ${businessName}, ${businessType}.
+  // Build services section with details
+  const servicesSection = services.length > 0 
+    ? `השירותים שלנו:\n${services.map((s: string, i: number) => `${i + 1}. ${s}`).join('\n')}`
+    : '';
+
+  // Build FAQ section
+  const faqSection = faq.length > 0 
+    ? `שאלות נפוצות ותשובות:\n${faq.map((f: any) => `שאלה: ${f.question}\nתשובה: ${f.answer}`).join('\n\n')}`
+    : '';
+
+  return `אתה נציג מכירות ושירות לקוחות של ${businessName}.
+${businessType ? `אנחנו ${businessType}.` : ''}
+
+כללי זהות (חובה!):
+- אתה נציג של ${businessName}, לא "עוזר AI כללי"
+- כשנשאל "מה אתם עושים?" או "ספר לי על החברה" - תאר את ${businessName} ואת השירותים שלנו
+- כשנשאל על מחירים/עלויות - השתמש במידע מהשאלות הנפוצות למטה
+- אם אין לך מידע ספציפי על מחיר - אמור שנשמח לתת הצעת מחיר מותאמת אישית
 
 ${toneInstructions[tone] || toneInstructions.friendly}
 
-מידע על העסק:
-- שם העסק: ${businessName}
-- סוג העסק: ${businessType}
+פרטי העסק:
+- שם: ${businessName}
+- תחום: ${businessType}
 ${businessHours ? `- שעות פעילות: ${businessHours}` : ''}
-${services.length > 0 ? `- שירותים: ${services.join(', ')}` : ''}
 
-${faq.length > 0 ? `שאלות נפוצות:\n${faq.map((f: any) => `ש: ${f.question}\nת: ${f.answer}`).join('\n\n')}` : ''}
+${servicesSection}
 
-${customPrompt ? `הוראות נוספות:\n${customPrompt}` : ''}
+${faqSection}
 
-משימות עיקריות:
-1. ברך את הלקוח בחביבות
-2. כשמישהו אומר את שמו - ברך אותו בשם ושאל איך תוכל לעזור
-3. ענה על שאלות לגבי העסק והשירותים
-4. עזור לקבוע פגישות
-5. אם אינך יודע תשובה, הצע ללקוח להשאיר הודעה
+${customPrompt ? `הנחיות מיוחדות:\n${customPrompt}` : ''}
+
+תפקידים עיקריים:
+1. ברך את הלקוח בחביבות והצג את עצמך כנציג של ${businessName}
+2. ענה על שאלות לגבי השירותים, המחירים והזמינות
+3. עזור לקבוע פגישות ותורים
+4. אם אינך יודע תשובה ספציפית - הצע ללקוח להשאיר פרטים ונחזור אליו
 
 תמיכה רב-לשונית:
 - זהה את שפת הדיבור של הלקוח (עברית, אנגלית, או ערבית)
 - ענה תמיד באותה שפה שבה הלקוח פנה אליך
 - אם הלקוח עובר שפה באמצע השיחה - עבור איתו בצורה חלקה
-- שמור על אותו סגנון ונימה בכל השפות
 
-חשוב מאוד:
-- אם הלקוח דובר עברית - דבר בעברית באותיות עבריות בלבד (א-ת)
-- אם הלקוח דובר אנגלית - דבר באנגלית
-- אם הלקוח דובר ערבית - דבר בערבית
-- היה קצר וענייני
-- היה אדיב ומקצועי`;
+כללים חשובים:
+- אם הלקוח דובר עברית - ענה בעברית באותיות עבריות בלבד
+- אם הלקוח דובר אנגלית - ענה באנגלית
+- אם הלקוח דובר ערבית - ענה בערבית
+- היה קצר, ענייני ומקצועי`;
 }
 
 serve(async (req) => {
@@ -326,33 +341,39 @@ serve(async (req) => {
 
     // 1. Update generative settings with LLM
     const systemPrompt = buildSystemPrompt(profile, script, language);
+    const promptTemplateName = `${profile?.business_name || 'Business'} Agent`;
     
-    // CRITICAL: LLM only supports 'en' - the system prompt instructs it to respond in Hebrew/Arabic
-    const generativeSettings = {
+    console.log('📋 System Prompt (first 300 chars):', systemPrompt.substring(0, 300));
+    console.log('📋 Business name in prompt:', profile?.business_name);
+    console.log('📋 Prompt template name:', promptTemplateName);
+    
+    // CRITICAL: selectedPrompt must reference the displayName of a template in promptTemplates
+    const generativeSettingsPayload = {
+      name: `${agentName}/generativeSettings`,
       languageCode: 'en',
-      generativeSettings: {
-        fallbackSettings: {
-          selectedPrompt: systemPrompt,
-          promptTemplates: [
-            {
-              displayName: "Main Prompt",
-              promptText: systemPrompt,
-              frozen: false
-            }
-          ]
-        },
-        llmModelSettings: {
-          model: "gemini-1.5-flash",
-          promptText: systemPrompt
-        },
-        knowledgeConnectorSettings: {
-          enabled: true,
-          searchConfig: {
-            maxSnippetCount: 3
+      fallbackSettings: {
+        selectedPrompt: promptTemplateName,  // Reference to template displayName, NOT the prompt text!
+        promptTemplates: [
+          {
+            displayName: promptTemplateName,
+            promptText: systemPrompt,
+            frozen: false
           }
+        ]
+      },
+      llmModelSettings: {
+        model: "",  // Empty string lets Dialogflow use default model
+        promptText: systemPrompt
+      },
+      knowledgeConnectorSettings: {
+        enabled: true,
+        searchConfig: {
+          maxSnippetCount: 3
         }
       }
     };
+
+    console.log('📤 Sending generative settings payload...');
 
     const updateResponse = await fetch(
       `https://dialogflow.googleapis.com/v3/${agentName}/generativeSettings?updateMask=fallbackSettings,llmModelSettings,knowledgeConnectorSettings`,
@@ -362,15 +383,17 @@ serve(async (req) => {
           'Authorization': `Bearer ${accessToken}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(generativeSettings)
+        body: JSON.stringify(generativeSettingsPayload)
       }
     );
 
     if (!updateResponse.ok) {
       const errorText = await updateResponse.text();
-      console.error('Failed to update generative settings:', errorText);
+      console.error('❌ Failed to update generative settings:', errorText);
     } else {
-      console.log('Updated generative settings with LLM');
+      const updateResult = await updateResponse.json();
+      console.log('✅ Updated generative settings with LLM');
+      console.log('📝 Response (first 300 chars):', JSON.stringify(updateResult).substring(0, 300));
     }
 
     // 2. Enable Generative Fallback on Default Start Flow
