@@ -39,18 +39,43 @@ interface BusinessInfo {
   phoneNumber: string;
 }
 
-// ===== CONSTANTS: Week 1 Optimizations =====
+// ===== CONSTANTS: Week 2+ Optimizations =====
 // Dynamic VAD: Pause words that require longer silence threshold
 const PAUSE_WORDS_REGEX = /רגע|שנייה|אממ|תן לי|بس|لحظة|يعني|wait|hold on/i;
 
 // FAQ patterns for router bypass
 const FAQ_PATTERNS = {
   hours: /שעות|פתוח|סגור|עד מתי|מתי פותחים|מתי סוגרים|متى|ساعات|working hours|open|close/i,
-  address: /כתובת|איפה|איך מגיעים|מיקום|וين|عنوان|where|location|address/i,
+  address: /כתובת|איפה|איך מגיעים|מיקום|وين|عنوان|where|location|address/i,
   whatsapp: /וואטסאפ|whatsapp|واتساب/i,
   prices: /מחיר|עולה|כמה זה|تكلفة|كم|سعر|price|cost|how much/i,
   cancel: /לבטל|ביטול|إلغاء|cancel/i,
 };
+
+// B2: Mixed Language Terms (Code-Switch Dictionary)
+const MIXED_LANGUAGE_TERMS = [
+  // Hebrew | Arabic equivalents
+  'תור', 'موعد',
+  'סניף', 'فرع',
+  'ביטול', 'إلغاء',
+  'בדיקה', 'فحص',
+  'משקפיים', 'نظارات',
+  'עדשות', 'عدسات',
+  'תעודת זהות', 'هوية',
+  'היום', 'اليوم',
+  'מחר', 'بكرة',
+  'בשעה', 'الساعة',
+  'WhatsApp', 'واتساب',
+  'אוקיי', 'اوكي',
+  'יאללה', 'يلا',
+  'סבבה', 'تمام',
+  'בסדר', 'ماشي',
+  'טוב', 'طيب',
+  'שלום', 'مرحبا',
+  'תודה', 'شكرا',
+  'כן', 'ايوا',
+  'לא', 'لا',
+];
 
 // LLM Settings (Week 1 optimizations)
 const LLM_CONFIG = {
@@ -59,6 +84,37 @@ const LLM_CONFIG = {
   COMPLEX_FLOW_MAX_TOKENS: 220,  // For appointment booking flows
   MAX_RESPONSE_CHARS: 180,       // Post-process truncation
 };
+
+// ===== TELEMETRY: Call Metrics Interface =====
+interface CallMetrics {
+  callSid: string;
+  userId: string;
+  ttfsMs: number;           // Time to first sound
+  endToAudioMs: number;     // End of utterance to agent audio
+  bargeInCount: number;
+  faqHitCount: number;
+  sttFailures: number;
+  avgTurnDurationMs: number;
+  totalTurns: number;
+  languagesDetected: string[];
+  turnDurations: number[];  // For calculating average
+}
+
+function createCallMetrics(callSid: string, userId: string): CallMetrics {
+  return {
+    callSid,
+    userId,
+    ttfsMs: 0,
+    endToAudioMs: 0,
+    bargeInCount: 0,
+    faqHitCount: 0,
+    sttFailures: 0,
+    avgTurnDurationMs: 0,
+    totalTurns: 0,
+    languagesDetected: [],
+    turnDurations: [],
+  };
+}
 
 // ===== STREAMING STT MANAGER =====
 // Real-time speech recognition using Google Cloud Speech-to-Text streaming API
@@ -87,6 +143,10 @@ interface StreamingSTTManager {
   chunkCount: number;
   // Dynamic VAD
   lastInterimCheck: number;
+  // B1: Sliding Window
+  slidingWindowActive: boolean;
+  lastSlidingWindowResult: string;
+  lastSlidingWindowTime: number;
 }
 
 function createStreamingSTTManager(): StreamingSTTManager {
@@ -105,6 +165,10 @@ function createStreamingSTTManager(): StreamingSTTManager {
     totalAudioDuration: 0,
     chunkCount: 0,
     lastInterimCheck: 0,
+    // B1: Sliding Window
+    slidingWindowActive: false,
+    lastSlidingWindowResult: '',
+    lastSlidingWindowTime: 0,
   };
 }
 
@@ -123,6 +187,9 @@ async function startStreamingSTT(
   manager.recognitionComplete = false;
   manager.chunkCount = 0;
   manager.totalAudioDuration = 0;
+  manager.slidingWindowActive = false;
+  manager.lastSlidingWindowResult = '';
+  manager.lastSlidingWindowTime = 0;
   
   console.log('🎙️ Started streaming STT session for language:', primaryLanguage);
 }
@@ -139,6 +206,83 @@ function feedAudioToStreaming(manager: StreamingSTTManager, audioBytes: Uint8Arr
   if (manager.chunkCount % 50 === 0) {
     console.log(`📊 Streaming buffer: ${manager.chunkCount} chunks, ~${(manager.totalAudioDuration / 1000).toFixed(1)}s`);
   }
+}
+
+// B1: Sliding Window Recognition - send partial audio for interim results
+async function performSlidingWindowRecognition(
+  manager: StreamingSTTManager,
+  accessToken: string,
+  projectId: string,
+  primaryLanguage: string,
+  phraseHints: string[]
+): Promise<string | null> {
+  if (!manager.isActive || manager.audioChunksBuffer.length === 0) {
+    return null;
+  }
+  
+  // Only process last 2 seconds of audio (160 chunks = 2s at 8kHz)
+  const chunksToProcess = manager.audioChunksBuffer.slice(-160);
+  
+  let totalBytes = 0;
+  for (const chunk of chunksToProcess) {
+    totalBytes += chunk.length;
+  }
+  
+  const windowAudio = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunksToProcess) {
+    windowAudio.set(chunk, offset);
+    offset += chunk.length;
+  }
+  
+  const audioBase64 = btoa(String.fromCharCode(...windowAudio));
+  
+  console.log('🔄 Sliding Window: Processing', totalBytes, 'bytes (last 2s)');
+  
+  const result = await transcribeAudioOptimized(
+    audioBase64,
+    accessToken,
+    projectId,
+    primaryLanguage,
+    phraseHints
+  );
+  
+  if (result.transcript) {
+    // Merge with previous result using Longest Common Suffix
+    const merged = mergeInterimTranscripts(manager.lastSlidingWindowResult, result.transcript);
+    manager.lastSlidingWindowResult = merged;
+    manager.lastSlidingWindowTime = Date.now();
+    console.log('🔄 Sliding Window interim:', merged);
+    return merged;
+  }
+  
+  return null;
+}
+
+// Merge interim transcripts using Longest Common Suffix
+function mergeInterimTranscripts(previous: string, current: string): string {
+  if (!previous) return current;
+  if (!current) return previous;
+  
+  // Find overlap between end of previous and start of current
+  const words1 = previous.split(/\s+/);
+  const words2 = current.split(/\s+/);
+  
+  let overlapLength = 0;
+  for (let i = 1; i <= Math.min(words1.length, words2.length); i++) {
+    const suffix = words1.slice(-i).join(' ');
+    const prefix = words2.slice(0, i).join(' ');
+    if (suffix === prefix) {
+      overlapLength = i;
+    }
+  }
+  
+  if (overlapLength > 0) {
+    return words1.join(' ') + ' ' + words2.slice(overlapLength).join(' ');
+  }
+  
+  // No overlap, prefer current (more recent)
+  return current;
 }
 
 // Stop streaming and get final transcript using optimized batch transcription
@@ -365,6 +509,13 @@ interface ConversationState {
   consecutiveSTTFailures: number;
   // Streaming STT manager
   streamingSTT: StreamingSTTManager;
+  // F1+F2: AbortController for TTS cancellation
+  currentTTSAbortController: AbortController | null;
+  pendingAudioChunks: string[];
+  // Telemetry
+  metrics: CallMetrics;
+  connectionTime: number;
+  utteranceEndTime: number;
 }
 
 // MULAW decode table for proper energy calculation
@@ -940,63 +1091,56 @@ function addFillerWords(response: string, turnCount: number, detectedLanguage: s
       fillers = [...englishFillers.confirming, ...englishFillers.responding];
     }
   } else {
+    // Hebrew default
     if (response.includes('?') || response.includes('?')) {
       fillers = hebrewFillers.thinking;
-    } else if (response.startsWith('כן') || response.startsWith('בטח') || response.startsWith('לא')) {
-      return response;
+    } else if (response.toLowerCase().includes('כן') || response.toLowerCase().includes('בטח')) {
+      fillers = hebrewFillers.confirming;
     } else {
-      fillers = turnCount % 2 === 0 
-        ? hebrewFillers.confirming 
-        : hebrewFillers.transitioning;
+      fillers = [...hebrewFillers.transitioning, ...hebrewFillers.responding];
     }
   }
   
-  if (Math.random() > 0.3) {
+  // Only 40% chance to add filler (reduced from 50%)
+  if (Math.random() > 0.4) {
     return response;
   }
   
   const filler = fillers[Math.floor(Math.random() * fillers.length)];
-  console.log('💬 Added filler word:', filler);
-  
   return `${filler} ${response}`;
 }
 
-// Clean AI response from unwanted phrases
+// Clean up AI response - remove unwanted phrases
 function cleanAIResponse(response: string): string {
-  const unwantedPhrases = [
-    'בתור עוזר AI',
-    'כעוזר AI',
-    'אני עוזר AI',
-    'בתור עוזר בינה מלאכותית',
-    'כמודל שפה',
-    'אני מודל שפה',
-    'as an AI assistant',
-    'as an AI',
-    'I am an AI',
-    'I\'m an AI',
-    'אני בינה מלאכותית',
-    'אני רובוט',
+  // Remove common AI-isms
+  const phrasesToRemove = [
+    /^(בטח|כמובן|בהחלט)[,!]?\s*/i,
+    /אני שמח\/ה? לעזור[.,]?\s*/i,
+    /אני כאן כדי לעזור[.,]?\s*/i,
+    /איך אני יכול\/ה? לעזור[.,]?\s*/i,
+    /יש לי את התשובה[.,]?\s*/i,
   ];
   
-  for (const phrase of unwantedPhrases) {
-    if (response.toLowerCase().includes(phrase.toLowerCase())) {
-      console.log('⚠️ Filtering unwanted phrase:', phrase);
-      return 'שלום! איך אפשר לעזור?';
-    }
+  let cleaned = response;
+  for (const pattern of phrasesToRemove) {
+    cleaned = cleaned.replace(pattern, '');
   }
   
-  return response;
+  return cleaned.trim();
 }
 
-// ===== Week 1 A4: FAQ Router =====
-// Bypass LLM for common FAQ intents - returns cached responses
+// ===== FAQ ROUTER: Week 1 A4 =====
 interface FAQMatch {
   intent: 'hours' | 'address' | 'whatsapp' | 'prices' | 'cancel' | 'none';
   response: string | null;
   confidence: number;
 }
 
-function matchFAQ(transcript: string, businessInfo: BusinessInfo, detectedLanguage: string): FAQMatch {
+function matchFAQ(
+  transcript: string, 
+  businessInfo: BusinessInfo, 
+  detectedLanguage: string
+): FAQMatch {
   const lowerTranscript = transcript.toLowerCase();
   
   // Check each FAQ pattern
@@ -1138,6 +1282,22 @@ function getVoiceForLanguage(
   }
 }
 
+// D2: Detect language for individual sentence (TTS Split)
+function detectSentenceLanguage(text: string): 'he' | 'ar' | 'en' {
+  const hebrewChars = (text.match(/[א-ת]/g) || []).length;
+  const arabicChars = (text.match(/[\u0600-\u06FF]/g) || []).length;
+  const totalChars = text.replace(/\s/g, '').length;
+  
+  if (totalChars === 0) return 'he';
+  
+  const hebrewRatio = hebrewChars / totalChars;
+  const arabicRatio = arabicChars / totalChars;
+  
+  if (arabicRatio > 0.3) return 'ar';
+  if (hebrewRatio > 0.3) return 'he';
+  return 'en';
+}
+
 // Hebrew pronunciation fixes
 const hebrewPronunciationFixes: Record<string, string> = {
   'בכיף': 'בְּכֵיף',
@@ -1167,13 +1327,14 @@ function fixHebrewPronunciation(text: string): string {
   return fixedText;
 }
 
-// Synthesize speech using Google TTS
+// F1: Synthesize speech with AbortController support
 async function synthesizeSpeech(
   text: string,
   accessToken: string,
   voiceGender: 'FEMALE' | 'MALE' = 'FEMALE',
   detectedLanguage: string = 'he-IL',
-  sttConfidence: number = 1.0
+  sttConfidence: number = 1.0,
+  abortController?: AbortController
 ): Promise<string> {
   console.log('🔊 Synthesizing speech in', detectedLanguage, ':', text);
   
@@ -1204,6 +1365,7 @@ async function synthesizeSpeech(
         speakingRate: 1.0,
       },
     }),
+    signal: abortController?.signal,
   });
 
   const data = await response.json();
@@ -1242,6 +1404,7 @@ async function synthesizeSpeech(
           speakingRate: 1.0,
         },
       }),
+      signal: abortController?.signal,
     });
     
     const fallbackData = await fallbackResponse.json();
@@ -1373,7 +1536,7 @@ async function sendImmediateFiller(
   }
 }
 
-// Stream response in sentences for faster time-to-first-audio
+// D2: Stream response with per-sentence language detection
 async function streamResponseInSentences(
   response: string,
   accessToken: string,
@@ -1393,49 +1556,111 @@ async function streamResponseInSentences(
   }
   
   if (sentences.length <= 1 || response.length < 50) {
-    const audio = await synthesizeSpeech(
-      response,
-      accessToken,
-      state.voiceGender,
-      detectedLanguage,
-      state.sttConfidence
-    );
-    sendAudioToTwilio(socket, state.streamSid, audio);
+    // F1: Use AbortController for TTS
+    state.currentTTSAbortController = new AbortController();
+    try {
+      const audio = await synthesizeSpeech(
+        response,
+        accessToken,
+        state.voiceGender,
+        detectedLanguage,
+        state.sttConfidence,
+        state.currentTTSAbortController
+      );
+      
+      // F2: Add to pending chunks queue
+      state.pendingAudioChunks.push(audio);
+      
+      // Send if not aborted
+      if (!state.currentTTSAbortController.signal.aborted) {
+        sendAudioToTwilio(socket, state.streamSid, audio);
+        state.pendingAudioChunks = [];
+      }
+    } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') {
+        console.log('🛑 TTS aborted due to barge-in');
+      } else {
+        throw err;
+      }
+    }
     return;
   }
   
   console.log('🎯 Streaming', sentences.length, 'sentences for faster response');
   
+  // F1: Create AbortController for multi-sentence TTS
+  state.currentTTSAbortController = new AbortController();
+  
   for (let i = 0; i < sentences.length; i++) {
+    // Check if aborted before synthesizing
+    if (state.currentTTSAbortController.signal.aborted) {
+      console.log('🛑 TTS streaming aborted at sentence', i + 1);
+      break;
+    }
+    
     const sentence = sentences[i];
     
-    const audio = await synthesizeSpeech(
-      sentence,
-      accessToken,
-      state.voiceGender,
-      detectedLanguage,
-      state.sttConfidence
-    );
+    // D2: Detect language for this specific sentence
+    const sentenceLang = detectSentenceLanguage(sentence);
+    const langCode = sentenceLang === 'ar' ? 'ar-XA' 
+                   : sentenceLang === 'he' ? 'he-IL' 
+                   : 'en-US';
     
-    if (i < sentences.length - 1) {
-      const chunkSize = 160;
-      const audioBytes = Uint8Array.from(atob(audio), c => c.charCodeAt(0));
+    if (langCode !== detectedLanguage) {
+      console.log('🌍 TTS Split: Sentence', i + 1, 'detected as', langCode);
+    }
+    
+    try {
+      const audio = await synthesizeSpeech(
+        sentence,
+        accessToken,
+        state.voiceGender,
+        langCode,
+        state.sttConfidence,
+        state.currentTTSAbortController
+      );
       
-      for (let j = 0; j < audioBytes.length; j += chunkSize) {
-        const chunk = audioBytes.slice(j, Math.min(j + chunkSize, audioBytes.length));
-        const chunkBase64 = btoa(String.fromCharCode(...chunk));
-        
-        socket.send(JSON.stringify({
-          event: 'media',
-          streamSid: state.streamSid,
-          media: { payload: chunkBase64 },
-        }));
+      // F2: Add to pending chunks queue
+      state.pendingAudioChunks.push(audio);
+      
+      // Check again after synthesis
+      if (state.currentTTSAbortController.signal.aborted) {
+        console.log('🛑 TTS aborted after synthesis');
+        state.pendingAudioChunks = [];
+        break;
       }
       
-      console.log('📤 Sent sentence', i + 1, '/', sentences.length);
-    } else {
-      sendAudioToTwilio(socket, state.streamSid, audio);
-      console.log('📤 Sent final sentence', i + 1, '/', sentences.length);
+      if (i < sentences.length - 1) {
+        const chunkSize = 160;
+        const audioBytes = Uint8Array.from(atob(audio), c => c.charCodeAt(0));
+        
+        for (let j = 0; j < audioBytes.length; j += chunkSize) {
+          const chunk = audioBytes.slice(j, Math.min(j + chunkSize, audioBytes.length));
+          const chunkBase64 = btoa(String.fromCharCode(...chunk));
+          
+          socket.send(JSON.stringify({
+            event: 'media',
+            streamSid: state.streamSid,
+            media: { payload: chunkBase64 },
+          }));
+        }
+        
+        console.log('📤 Sent sentence', i + 1, '/', sentences.length);
+      } else {
+        sendAudioToTwilio(socket, state.streamSid, audio);
+        console.log('📤 Sent final sentence', i + 1, '/', sentences.length);
+      }
+      
+      // Clear from pending queue after sending
+      state.pendingAudioChunks = state.pendingAudioChunks.filter(c => c !== audio);
+      
+    } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') {
+        console.log('🛑 TTS request aborted');
+        state.pendingAudioChunks = [];
+        break;
+      }
+      throw err;
     }
   }
 }
@@ -1453,6 +1678,7 @@ async function processAudioWithStreaming(
   
   state.isProcessing = true;
   const processingStartTime = Date.now();
+  state.utteranceEndTime = processingStartTime; // Record for telemetry
   
   console.log('🚀 STREAMING: Processing audio with streaming STT...');
   
@@ -1478,6 +1704,11 @@ async function processAudioWithStreaming(
       
       // Store confidence in state
       state.sttConfidence = confidence;
+      
+      // Telemetry: Track language
+      if (!state.metrics.languagesDetected.includes(detectedLanguage)) {
+        state.metrics.languagesDetected.push(detectedLanguage);
+      }
       
       // Validation: Check for low-confidence short transcripts
       const hebrewWords = /[א-ת]{2,}/g;
@@ -1530,6 +1761,7 @@ async function processAudioWithStreaming(
         timestamp: Date.now()
       });
       state.turnCount++;
+      state.metrics.totalTurns++;
       
       // Week 1 A4: Try FAQ Router first before LLM
       const faqMatch = matchFAQ(transcript, state.businessInfo, detectedLanguage);
@@ -1545,6 +1777,8 @@ async function processAudioWithStreaming(
           ...extractCustomerInfo(transcript)
         };
         aiTime = 0;
+        // Telemetry: Track FAQ hit
+        state.metrics.faqHitCount++;
       } else {
         // No FAQ match - use LLM
         const aiStartTime = Date.now();
@@ -1599,6 +1833,10 @@ async function processAudioWithStreaming(
       // Mark agent as speaking
       state.isAgentSpeaking = true;
       
+      // Clear pending audio and reset AbortController
+      state.pendingAudioChunks = [];
+      state.currentTTSAbortController = null;
+      
       // Synthesize and send response
       const ttsStartTime = Date.now();
       await streamResponseInSentences(
@@ -1610,6 +1848,11 @@ async function processAudioWithStreaming(
       );
       const ttsTime = Date.now() - ttsStartTime;
       
+      // Telemetry: Record end-to-audio time
+      const endToAudioMs = Date.now() - state.utteranceEndTime;
+      state.metrics.endToAudioMs = endToAudioMs;
+      state.metrics.turnDurations.push(Date.now() - processingStartTime);
+      
       const totalTime = Date.now() - processingStartTime;
       console.log(`⏱️ STREAMING TOTAL: ${totalTime}ms (STT: ${sttTime}ms, AI: ${aiTime}ms, TTS: ${ttsTime}ms)`);
       
@@ -1620,6 +1863,7 @@ async function processAudioWithStreaming(
       console.log('⚠️ STREAMING: No transcript returned');
       
       state.consecutiveSTTFailures++;
+      state.metrics.sttFailures++;
       console.log('📊 Consecutive STT failures:', state.consecutiveSTTFailures);
       
       if (state.consecutiveSTTFailures >= 2 && !state.isAgentSpeaking) {
@@ -1652,7 +1896,7 @@ async function processAudioWithStreaming(
   }
 }
 
-// Build phrase hints from business data - MULTILINGUAL
+// B2: Build phrase hints with Mixing Dictionary
 function buildPhraseHints(profile: any, script: any): string[] {
   const hints: string[] = [
     // Hebrew business terms
@@ -1712,6 +1956,9 @@ function buildPhraseHints(profile: any, script: any): string[] {
     'service',
     'tomorrow',
     'today',
+    
+    // B2: Add Mixed Language Terms (Code-Switch Dictionary)
+    ...MIXED_LANGUAGE_TERMS,
   ];
   
   if (profile?.business_name) {
@@ -1752,8 +1999,44 @@ function buildPhraseHints(profile: any, script: any): string[] {
     }
   }
   
-  console.log('📢 Phrase hints (', hints.length, 'terms including Hebrew, Arabic, English)');
+  console.log('📢 Phrase hints (', hints.length, 'terms including Hebrew, Arabic, English + B2 Mixing Dictionary)');
   return hints;
+}
+
+// Save call metrics to database
+async function saveCallMetrics(metrics: CallMetrics): Promise<void> {
+  try {
+    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    const supabase = createClient(supabaseUrl, supabaseKey);
+    
+    // Calculate average turn duration
+    const avgTurnDurationMs = metrics.turnDurations.length > 0
+      ? Math.round(metrics.turnDurations.reduce((a, b) => a + b, 0) / metrics.turnDurations.length)
+      : 0;
+    
+    const { error } = await supabase.from('call_metrics').insert({
+      call_sid: metrics.callSid,
+      user_id: metrics.userId,
+      ttfs_ms: metrics.ttfsMs,
+      end_to_audio_ms: metrics.endToAudioMs,
+      barge_in_count: metrics.bargeInCount,
+      faq_hit_count: metrics.faqHitCount,
+      stt_failures: metrics.sttFailures,
+      total_turns: metrics.totalTurns,
+      avg_turn_duration_ms: avgTurnDurationMs,
+      languages_detected: metrics.languagesDetected,
+    });
+    
+    if (error) {
+      console.error('❌ Failed to save call metrics:', error.message);
+    } else {
+      console.log('📊 Call metrics saved - TTFS:', metrics.ttfsMs, 'ms, E2A:', metrics.endToAudioMs, 
+                  'ms, Barge-ins:', metrics.bargeInCount, ', FAQ hits:', metrics.faqHitCount);
+    }
+  } catch (err) {
+    console.error('⚠️ Error saving call metrics:', err);
+  }
 }
 
 serve(async (req) => {
@@ -1777,6 +2060,10 @@ serve(async (req) => {
     const MAX_UTTERANCE_MS = 12000;
     const MIN_SPEECH_MS = 350;                   // Reduced from 400ms
     const MIN_AUDIO_BYTES = 1600;
+    
+    // B1: Sliding Window constants
+    const SLIDING_WINDOW_INTERVAL_MS = 400;      // Check every 400ms
+    const SLIDING_WINDOW_MIN_DURATION_MS = 1200; // Start after 1.2s of speech
     
     socket.onopen = () => {
       console.log('WebSocket connection opened');
@@ -1843,6 +2130,10 @@ serve(async (req) => {
             // Create streaming STT manager
             const streamingSTT = createStreamingSTTManager();
             
+            // Create call metrics
+            const metrics = createCallMetrics(callSid, userId);
+            const connectionTime = Date.now();
+            
             state = {
               userId,
               agentId: agentId || profile?.dialogflow_agent_id || '',
@@ -1880,7 +2171,14 @@ serve(async (req) => {
               businessInfo,
               phraseHints,
               consecutiveSTTFailures: 0,
-              streamingSTT, // NEW: Streaming STT manager
+              streamingSTT,
+              // F1+F2: AbortController and pending chunks
+              currentTTSAbortController: null,
+              pendingAudioChunks: [],
+              // Telemetry
+              metrics,
+              connectionTime,
+              utteranceEndTime: 0,
             };
             
             // Send greeting
@@ -1894,7 +2192,12 @@ serve(async (req) => {
                     try {
                       greetingState.isAgentSpeaking = true;
                       greetingState.greetingSentAt = Date.now();
-                      console.log('🎙️ Sending greeting after 300ms delay:', greetingState.greeting);
+                      
+                      // Telemetry: Record TTFS
+                      greetingState.metrics.ttfsMs = Date.now() - greetingState.connectionTime;
+                      
+                      console.log('🎙️ Sending greeting after 300ms delay:', greetingState.greeting, 
+                                  '(TTFS:', greetingState.metrics.ttfsMs, 'ms)');
                       const sent = sendAudioToTwilio(socket, greetingState.streamSid, greetingAudio);
                       if (!sent) {
                         console.error('❌ Failed to send greeting - WebSocket not ready');
@@ -1948,13 +2251,28 @@ serve(async (req) => {
               const timeSinceTTS = now - state.lastTTSEndTime;
               const isInEchoGracePeriod = state.lastTTSEndTime > 0 && timeSinceTTS < state.echoGracePeriodMs;
               
-              // BARGE-IN detection
+              // F1+F2: BARGE-IN detection with AbortController
               if (state.isAgentSpeaking && vad.hasVoice && !state.isProcessing && !isInEchoGracePeriod) {
                 console.log('🎤 Barge-in detected! Energy:', vad.energy.toFixed(0));
+                
+                // F1: Abort in-flight TTS requests
+                if (state.currentTTSAbortController) {
+                  state.currentTTSAbortController.abort();
+                  console.log('🛑 Aborted in-flight TTS request');
+                }
+                
+                // F2: Clear pending audio chunks
+                if (state.pendingAudioChunks.length > 0) {
+                  console.log('🛑 Cleared', state.pendingAudioChunks.length, 'pending audio chunks');
+                  state.pendingAudioChunks = [];
+                }
                 
                 clearTwilioAudio(socket, state.streamSid);
                 state.isAgentSpeaking = false;
                 state.lastTTSEndTime = now;
+                
+                // Telemetry: Count barge-in
+                state.metrics.bargeInCount++;
                 
                 // Start streaming session for barge-in
                 startStreamingSTT(state.streamingSTT, accessToken!, state.detectedLanguage, state.phraseHints);
@@ -1970,33 +2288,60 @@ serve(async (req) => {
                 
                 if (vad.hasVoice) {
                   state.lastVoiceTime = now;
+                  state.lastAudioTime = now;
                   
+                  // Start speaking
                   if (!state.isUserSpeaking) {
+                    console.log('🟢 STREAMING: User started speaking');
                     state.isUserSpeaking = true;
                     state.speechStartTime = now;
                     
-                    // START streaming session
-                    console.log('🟢 STREAMING: Utterance START - Energy:', vad.energy.toFixed(0));
+                    // Start streaming session
                     startStreamingSTT(state.streamingSTT, accessToken!, state.detectedLanguage, state.phraseHints);
                   }
                   
                   // Feed audio to streaming manager
                   feedAudioToStreaming(state.streamingSTT, audioBytes);
-                } else if (state.isUserSpeaking && state.streamingSTT.isActive) {
-                  // Continue feeding even during brief silence (for natural pauses)
-                  feedAudioToStreaming(state.streamingSTT, audioBytes);
-                }
-                
-                state.lastAudioTime = now;
-                
-                // END OF UTTERANCE detection - Week 1 A3: Dynamic VAD
-                if (state.isUserSpeaking && state.lastVoiceTime > 0) {
+                  
+                  // B1: Sliding Window - check for interim results every 400ms after 1.2s
+                  const speechDuration = state.speechStartTime ? now - state.speechStartTime : 0;
+                  const timeSinceLastSliding = now - state.streamingSTT.lastSlidingWindowTime;
+                  
+                  if (speechDuration >= SLIDING_WINDOW_MIN_DURATION_MS && 
+                      timeSinceLastSliding >= SLIDING_WINDOW_INTERVAL_MS &&
+                      !state.isProcessing) {
+                    
+                    // Perform sliding window recognition in background
+                    performSlidingWindowRecognition(
+                      state.streamingSTT,
+                      accessToken!,
+                      state.projectId,
+                      state.detectedLanguage,
+                      state.phraseHints
+                    ).then(interimResult => {
+                      if (interimResult && state) {
+                        state.streamingSTT.interimTranscript = interimResult;
+                        
+                        // Early FAQ detection
+                        const earlyFAQ = matchFAQ(interimResult, state.businessInfo, state.detectedLanguage);
+                        if (earlyFAQ.confidence > 0.9) {
+                          console.log('🎯 Early FAQ detection (sliding window):', earlyFAQ.intent);
+                        }
+                      }
+                    }).catch(err => {
+                      console.error('⚠️ Sliding window error:', err);
+                    });
+                    
+                    state.streamingSTT.lastSlidingWindowTime = now;
+                  }
+                  
+                } else if (state.isUserSpeaking) {
+                  // Check for end of utterance
                   const silenceDuration = now - state.lastVoiceTime;
                   const speechDuration = state.speechStartTime ? now - state.speechStartTime : 0;
                   
                   // Week 1 A3: Dynamic silence threshold based on pause words
-                  const interimTranscript = state.streamingSTT.interimTranscript || '';
-                  const hasPauseWord = PAUSE_WORDS_REGEX.test(interimTranscript);
+                  const hasPauseWord = PAUSE_WORDS_REGEX.test(state.streamingSTT.interimTranscript);
                   const dynamicSilenceThreshold = hasPauseWord ? PAUSE_WORD_SILENCE_MS : DEFAULT_SILENCE_MS;
                   
                   const hasEnoughSilence = silenceDuration >= dynamicSilenceThreshold;
@@ -2043,6 +2388,10 @@ serve(async (req) => {
               // Reset streaming manager
               state.streamingSTT.isActive = false;
               state.streamingSTT.audioChunksBuffer = [];
+              
+              // F1: Clear AbortController
+              state.currentTTSAbortController = null;
+              state.pendingAudioChunks = [];
               
               console.log('✅ Agent finished speaking, ready to listen');
             }
@@ -2121,6 +2470,10 @@ ${state.conversationHistory.map(h => `${h.role === 'user' ? 'לקוח' : 'נצי
                 } else {
                   console.log('✅ Call finalized - Duration:', callDuration, 's, Turns:', state.turnCount);
                 }
+                
+                // Save call metrics to database
+                await saveCallMetrics(state.metrics);
+                
               } catch (finalErr) {
                 console.error('⚠️ Error finalizing call:', finalErr);
               }
@@ -2147,13 +2500,19 @@ ${state.conversationHistory.map(h => `${h.role === 'user' ? 'לקוח' : 'נצי
   return new Response(
     JSON.stringify({
       status: 'ok',
-      message: 'Twilio Media Stream Handler - Week 1 Optimizations',
-      version: '4.0.0-week1',
+      message: 'Twilio Media Stream Handler - Week 2 Full Optimizations',
+      version: '5.0.0-week2',
       features: [
         'A1: LLM hardening (temp 0.35, max_tokens 140, 180-char truncation)',
         'A2: Smart bridging (650ms threshold)',
         'A3: Dynamic VAD (420ms default, 750ms for pause words)',
-        'A4: FAQ Router (hours, address, whatsapp, prices, cancel)'
+        'A4: FAQ Router (hours, address, whatsapp, prices, cancel)',
+        'B1: Sliding Window STT (400ms interim, 1.2s min)',
+        'B2: Mixing Dictionary (Hebrew/Arabic code-switch terms)',
+        'D2: TTS Split (per-sentence language detection)',
+        'F1: AbortController (cancel in-flight TTS)',
+        'F2: Pending chunks queue (clear on barge-in)',
+        'Telemetry: TTFS, End-to-Audio, Barge-in count, FAQ hits'
       ]
     }),
     {
