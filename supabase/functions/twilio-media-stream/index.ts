@@ -657,58 +657,64 @@ function cleanAIResponse(response: string): string {
   return response;
 }
 
-// Get voice configuration based on detected language
-// Using Wavenet voices - proven to work reliably
+// Get voice configuration based on detected language - using Chirp 3 HD (best quality)
 function getVoiceForLanguage(
   detectedLanguage: string, 
   voiceGender: 'FEMALE' | 'MALE',
   sttConfidence: number = 1.0
 ): { languageCode: string; name: string } {
   
-  // Wavenet voices - high quality and proven to work
-  const voices = {
+  // Chirp 3 HD voices - Google's highest quality multilingual voices
+  const chirp3Voices = {
     hebrew: {
-      FEMALE: 'he-IL-Wavenet-A',   // Hebrew female
-      MALE: 'he-IL-Wavenet-D'      // Hebrew male
+      FEMALE: 'he-IL-Chirp3-HD-Aoede',   // Warm, natural female
+      MALE: 'he-IL-Chirp3-HD-Charon'     // Deep, professional male
     },
     arabic: {
-      FEMALE: 'ar-XA-Wavenet-A',
-      MALE: 'ar-XA-Wavenet-B'
+      FEMALE: 'ar-XA-Chirp3-HD-Aoede',
+      MALE: 'ar-XA-Chirp3-HD-Charon'
     },
     english: {
-      FEMALE: 'en-US-Wavenet-F',
-      MALE: 'en-US-Wavenet-D'
+      FEMALE: 'en-US-Chirp3-HD-Aoede',
+      MALE: 'en-US-Chirp3-HD-Charon'
     }
+  };
+  
+  // Fallback to Wavenet if Chirp 3 HD not available
+  const wavenetFallback = {
+    hebrew: { FEMALE: 'he-IL-Wavenet-A', MALE: 'he-IL-Wavenet-D' },
+    arabic: { FEMALE: 'ar-XA-Wavenet-A', MALE: 'ar-XA-Wavenet-B' },
+    english: { FEMALE: 'en-US-Wavenet-F', MALE: 'en-US-Wavenet-D' }
   };
   
   // If low confidence - always use Hebrew voice
   if (sttConfidence < 0.5 || !detectedLanguage) {
-    console.log('🎤 Low confidence or no language, using Hebrew Wavenet voice');
+    console.log('🎤 Low confidence or no language, using Hebrew Chirp3-HD voice');
     return { 
       languageCode: 'he-IL', 
-      name: voices.hebrew[voiceGender]
+      name: chirp3Voices.hebrew[voiceGender]
     };
   }
   
   const lang = detectedLanguage.toLowerCase();
   
   if (lang.startsWith('en')) {
-    console.log('🎤 Using English Wavenet voice');
+    console.log('🎤 Using English Chirp3-HD voice');
     return { 
       languageCode: 'en-US', 
-      name: voices.english[voiceGender]
+      name: chirp3Voices.english[voiceGender]
     };
   } else if (lang.startsWith('ar')) {
-    console.log('🎤 Using Arabic Wavenet voice');
+    console.log('🎤 Using Arabic Chirp3-HD voice');
     return { 
       languageCode: 'ar-XA', 
-      name: voices.arabic[voiceGender]
+      name: chirp3Voices.arabic[voiceGender]
     };
   } else {
-    console.log('🎤 Using Hebrew Wavenet voice');
+    console.log('🎤 Using Hebrew Chirp3-HD voice');
     return { 
       languageCode: 'he-IL', 
-      name: voices.hebrew[voiceGender]
+      name: chirp3Voices.hebrew[voiceGender]
     };
   }
 }
@@ -754,19 +760,31 @@ async function synthesizeSpeech(
         audioEncoding: 'MULAW',
         sampleRateHertz: 8000,
         effectsProfileId: ['telephony-class-application'],
-        speakingRate: 1.05,   // Slightly faster for lower latency
-        pitch: 0.2,           // Slight warmth - Neural2 supports pitch
+        speakingRate: 1.0,   // Natural rate for Chirp 3 HD
+        // NOTE: No pitch parameter - Chirp3-HD doesn't support it!
       },
     }),
   });
 
   const data = await response.json();
   
-  // Handle errors - try with standard voice settings
+  // Fallback to Wavenet if Chirp 3 HD not available
   if (data.error) {
-    console.log('⚠️ TTS error, retrying with default settings:', data.error.message);
+    console.log('⚠️ Chirp3-HD unavailable, trying Wavenet fallback:', data.error.message);
     
-    const retryResponse = await fetch('https://texttospeech.googleapis.com/v1/text:synthesize', {
+    // Wavenet fallback mapping
+    const fallbackMap: Record<string, Record<string, string>> = {
+      'he-IL': { FEMALE: 'he-IL-Wavenet-A', MALE: 'he-IL-Wavenet-D' },
+      'ar-XA': { FEMALE: 'ar-XA-Wavenet-A', MALE: 'ar-XA-Wavenet-B' },
+      'en-US': { FEMALE: 'en-US-Wavenet-F', MALE: 'en-US-Wavenet-D' },
+    };
+    
+    const langFallback = fallbackMap[voiceConfig.languageCode] || fallbackMap['he-IL'];
+    const fallbackVoice = langFallback[voiceGender] || langFallback['FEMALE'];
+    
+    console.log('🔄 Using fallback voice:', fallbackVoice);
+    
+    const fallbackResponse = await fetch('https://texttospeech.googleapis.com/v1/text:synthesize', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${accessToken}`,
@@ -776,23 +794,23 @@ async function synthesizeSpeech(
         input: { text },
         voice: {
           languageCode: voiceConfig.languageCode,
-          name: voiceConfig.name,
+          name: fallbackVoice,
         },
         audioConfig: {
           audioEncoding: 'MULAW',
           sampleRateHertz: 8000,
           effectsProfileId: ['telephony-class-application'],
-          speakingRate: 1.0,  // Standard rate on retry
+          speakingRate: 1.0,
         },
       }),
     });
     
-    const retryData = await retryResponse.json();
-    if (retryData.audioContent) {
-      console.log('✅ TTS retry succeeded');
-      return retryData.audioContent;
+    const fallbackData = await fallbackResponse.json();
+    if (fallbackData.audioContent) {
+      console.log('✅ Wavenet fallback succeeded');
+      return fallbackData.audioContent;
     } else {
-      console.error('❌ TTS retry also failed:', retryData.error);
+      console.error('❌ Fallback also failed:', fallbackData.error);
     }
   }
   
@@ -861,33 +879,24 @@ async function processAudioBuffer(
   console.log('🔄 Processing audio buffer, chunks:', state.audioBuffer.length, 'bytes:', state.totalBufferBytes);
   
   try {
-    // TRIM SILENCE: Remove leading/trailing silence before processing
-    const trimmedBuffer = trimSilenceFromAudio(state.audioBuffer, state.noiseFloor);
+    // Use full audio buffer (no trimming - was causing STT failures)
+    const audioBuffer = state.audioBuffer;
     
-    // Check if enough audio remains after trimming
-    if (trimmedBuffer.length < 3) {
-      console.log('⏭️ Skipping: Audio too short after trimming (' + trimmedBuffer.length + ' chunks)');
-      state.audioBuffer = [];
-      state.totalBufferBytes = 0;
-      state.isProcessing = false;
-      return;
+    // Calculate total bytes
+    let totalBytes = 0;
+    for (const chunk of audioBuffer) {
+      totalBytes += chunk.length;
     }
     
-    // Calculate total bytes in trimmed buffer
-    let trimmedBytes = 0;
-    for (const chunk of trimmedBuffer) {
-      trimmedBytes += chunk.length;
-    }
-    
-    // Combine trimmed audio chunks
-    const combinedMulaw = new Uint8Array(trimmedBytes);
+    // Combine audio chunks
+    const combinedMulaw = new Uint8Array(totalBytes);
     let offset = 0;
-    for (const chunk of trimmedBuffer) {
+    for (const chunk of audioBuffer) {
       combinedMulaw.set(chunk, offset);
       offset += chunk.length;
     }
     
-    console.log('📦 Combined MULAW audio bytes:', combinedMulaw.length, '(original:', state.totalBufferBytes, ', trimmed:', trimmedBytes, ')');
+    console.log('📦 Combined MULAW audio bytes:', combinedMulaw.length);
     
     // Clear buffer
     state.audioBuffer = [];
