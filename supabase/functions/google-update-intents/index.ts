@@ -93,7 +93,39 @@ function getExpandedIntents(language: string) {
         { parts: [{ text: "Hey" }], repeatCount: 1 }
       ]
     },
-    // Schedule appointment intent - expanded
+    // Introduction intent - when user says their name
+    {
+      displayName: "introduction",
+      trainingPhrases: language === 'he' ? [
+        { parts: [{ text: "שלום אני אמיר" }], repeatCount: 1 },
+        { parts: [{ text: "אני דוד" }], repeatCount: 1 },
+        { parts: [{ text: "קוראים לי יוסי" }], repeatCount: 1 },
+        { parts: [{ text: "שמי משה" }], repeatCount: 1 },
+        { parts: [{ text: "אני שרה" }], repeatCount: 1 },
+        { parts: [{ text: "שלום קוראים לי" }], repeatCount: 1 },
+        { parts: [{ text: "אני מדבר עם" }], repeatCount: 1 },
+        { parts: [{ text: "השם שלי הוא" }], repeatCount: 1 },
+        { parts: [{ text: "אני נועה" }], repeatCount: 1 },
+        { parts: [{ text: "אני יעל" }], repeatCount: 1 },
+        { parts: [{ text: "זה דני" }], repeatCount: 1 },
+        { parts: [{ text: "שמי הוא" }], repeatCount: 1 },
+        { parts: [{ text: "אני מציג את עצמי" }], repeatCount: 1 },
+        { parts: [{ text: "היי אני" }], repeatCount: 1 },
+        { parts: [{ text: "שלום שלום אני" }], repeatCount: 1 }
+      ] : language === 'ar' ? [
+        { parts: [{ text: "أنا أحمد" }], repeatCount: 1 },
+        { parts: [{ text: "اسمي محمد" }], repeatCount: 1 },
+        { parts: [{ text: "انا اسمي" }], repeatCount: 1 },
+        { parts: [{ text: "مرحبا اسمي" }], repeatCount: 1 }
+      ] : [
+        { parts: [{ text: "My name is John" }], repeatCount: 1 },
+        { parts: [{ text: "I'm David" }], repeatCount: 1 },
+        { parts: [{ text: "This is Sarah speaking" }], repeatCount: 1 },
+        { parts: [{ text: "Hello, I'm" }], repeatCount: 1 },
+        { parts: [{ text: "Hi, my name is" }], repeatCount: 1 }
+      ]
+    },
+    // Schedule appointment intent - expanded (no parameters to avoid entity type errors)
     {
       displayName: "schedule.appointment",
       trainingPhrases: language === 'he' ? [
@@ -125,20 +157,6 @@ function getExpandedIntents(language: string) {
         { parts: [{ text: "Is there an available slot" }], repeatCount: 1 },
         { parts: [{ text: "I'd like to book" }], repeatCount: 1 },
         { parts: [{ text: "Can I schedule something" }], repeatCount: 1 }
-      ],
-      parameters: [
-        {
-          id: "customer_name",
-          entityType: "@sys.person",
-          isList: false,
-          redact: false
-        },
-        {
-          id: "date_time",
-          entityType: "@sys.date-time",
-          isList: false,
-          redact: false
-        }
       ]
     },
     // Check availability intent - expanded
@@ -371,7 +389,7 @@ serve(async (req) => {
             body: JSON.stringify({
               displayName: intent.displayName,
               trainingPhrases: intent.trainingPhrases,
-              ...(intent.parameters ? { parameters: intent.parameters } : {})
+              ...('parameters' in intent ? { parameters: intent.parameters } : {})
             }),
           }
         );
