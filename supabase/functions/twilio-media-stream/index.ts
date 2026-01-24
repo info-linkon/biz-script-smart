@@ -500,7 +500,7 @@ function cleanAIResponse(response: string): string {
   return response;
 }
 
-// Get voice configuration based on detected language
+// Get voice configuration based on detected language - UPGRADED to Studio voices
 function getVoiceForLanguage(
   detectedLanguage: string, 
   voiceGender: 'FEMALE' | 'MALE',
@@ -509,10 +509,11 @@ function getVoiceForLanguage(
   
   // If low confidence - always use Hebrew voice
   if (sttConfidence < 0.5 || !detectedLanguage) {
-    console.log('🎤 Low confidence or no language, using Hebrew voice');
+    console.log('🎤 Low confidence or no language, using Hebrew Studio voice');
     return { 
       languageCode: 'he-IL', 
-      name: voiceGender === 'FEMALE' ? 'he-IL-Wavenet-A' : 'he-IL-Wavenet-B' 
+      // Studio voices are highest quality (Chirp 3)
+      name: voiceGender === 'FEMALE' ? 'he-IL-Studio-A' : 'he-IL-Studio-B' 
     };
   }
   
@@ -521,17 +522,20 @@ function getVoiceForLanguage(
   if (lang.startsWith('en')) {
     return { 
       languageCode: 'en-US', 
-      name: voiceGender === 'FEMALE' ? 'en-US-Wavenet-F' : 'en-US-Wavenet-D' 
+      // Neural2 voices are highest quality for English
+      name: voiceGender === 'FEMALE' ? 'en-US-Neural2-F' : 'en-US-Neural2-D' 
     };
   } else if (lang.startsWith('ar')) {
     return { 
       languageCode: 'ar-XA', 
+      // Wavenet for Arabic (Studio not available)
       name: voiceGender === 'FEMALE' ? 'ar-XA-Wavenet-A' : 'ar-XA-Wavenet-B' 
     };
   } else {
     return { 
       languageCode: 'he-IL', 
-      name: voiceGender === 'FEMALE' ? 'he-IL-Wavenet-A' : 'he-IL-Wavenet-B' 
+      // Studio voices for Hebrew (highest quality available)
+      name: voiceGender === 'FEMALE' ? 'he-IL-Studio-A' : 'he-IL-Studio-B' 
     };
   }
 }
@@ -767,6 +771,40 @@ async function processAudioBuffer(
       });
       
       console.log('🤖 Agent response:', result.response);
+      
+      // Save transcript and customer info to database
+      try {
+        const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+        const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+        const supabase = createClient(supabaseUrl, supabaseKey);
+        
+        // Format transcript entry
+        const transcriptEntry = {
+          role: 'user' as const,
+          text: transcript,
+          timestamp: Date.now()
+        };
+        const agentEntry = {
+          role: 'agent' as const, 
+          text: result.response,
+          timestamp: Date.now()
+        };
+        
+        await supabase.from('calls')
+          .update({ 
+            transcript: state.conversationHistory,
+            customer_name: state.customerName,
+            customer_topic: state.customerTopic,
+          })
+          .eq('user_id', state.userId)
+          .eq('status', 'in_progress')
+          .order('created_at', { ascending: false })
+          .limit(1);
+          
+        console.log('💾 Saved transcript to database');
+      } catch (dbErr) {
+        console.error('⚠️ Error saving transcript:', dbErr);
+      }
       
       // Mark agent as speaking
       state.isAgentSpeaking = true;
@@ -1114,6 +1152,78 @@ serve(async (req) => {
             
           case 'stop':
             console.log('Stream stopped');
+            
+            // Generate call summary and finalize call record
+            if (state && state.conversationHistory.length > 0) {
+              try {
+                const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+                const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+                const supabase = createClient(supabaseUrl, supabaseKey);
+                
+                // Generate AI summary of the call
+                const lovableApiKey = Deno.env.get('LOVABLE_API_KEY');
+                let callSummary = '';
+                
+                if (lovableApiKey && state.conversationHistory.length > 2) {
+                  const summaryPrompt = `סכם את השיחה הטלפונית הבאה ב-2-3 משפטים קצרים בעברית. התמקד בעיקר: מה הלקוח רצה ומה סוכם.
+
+שיחה:
+${state.conversationHistory.map(h => `${h.role === 'user' ? 'לקוח' : 'נציג'}: ${h.text}`).join('\n')}`;
+
+                  try {
+                    const summaryResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+                      method: 'POST',
+                      headers: {
+                        'Authorization': `Bearer ${lovableApiKey}`,
+                        'Content-Type': 'application/json',
+                      },
+                      body: JSON.stringify({
+                        model: 'google/gemini-3-flash-preview',
+                        messages: [
+                          { role: 'system', content: 'אתה מסכם שיחות טלפוניות. ענה בעברית בלבד, בקצרה ובתמציתיות.' },
+                          { role: 'user', content: summaryPrompt }
+                        ],
+                        max_tokens: 150,
+                        temperature: 0.3,
+                      })
+                    });
+                    
+                    if (summaryResponse.ok) {
+                      const summaryData = await summaryResponse.json();
+                      callSummary = summaryData.choices?.[0]?.message?.content || '';
+                      console.log('📝 Generated call summary:', callSummary);
+                    }
+                  } catch (summaryErr) {
+                    console.error('⚠️ Error generating summary:', summaryErr);
+                  }
+                }
+                
+                // Calculate call duration
+                const callDuration = state.conversationHistory.length > 0
+                  ? Math.floor((Date.now() - state.conversationHistory[0].timestamp) / 1000)
+                  : 0;
+                
+                // Update call record with final data
+                await supabase.from('calls')
+                  .update({ 
+                    status: 'completed',
+                    transcript: state.conversationHistory,
+                    call_summary: callSummary || null,
+                    customer_name: state.customerName,
+                    customer_topic: state.customerTopic,
+                    duration_seconds: callDuration,
+                    summary: callSummary || null,
+                  })
+                  .eq('user_id', state.userId)
+                  .eq('status', 'in_progress')
+                  .order('created_at', { ascending: false })
+                  .limit(1);
+                  
+                console.log('✅ Call finalized - Duration:', callDuration, 's, Turns:', state.turnCount);
+              } catch (finalErr) {
+                console.error('⚠️ Error finalizing call:', finalErr);
+              }
+            }
             break;
         }
       } catch (err) {
@@ -1135,15 +1245,20 @@ serve(async (req) => {
   // Regular HTTP request - return info
   return new Response(
     JSON.stringify({ 
-      message: 'Twilio Media Stream WebSocket Handler',
+      message: 'Twilio Media Stream WebSocket Handler - MAXIMUM QUALITY',
       usage: 'Connect via WebSocket for real-time audio streaming',
+      version: '2.0',
       features: [
-        'Chirp 2 STT (V2 API)',
-        'Lovable AI (Gemini 2.5 Flash)',
-        'Enhanced SSML TTS',
-        'Phrase Hints',
+        'Google STT V1 (phone_call for English)',
+        'Lovable AI (Gemini 3 Flash Preview)',
+        'Studio/Neural2 TTS Voices (Highest Quality)',
+        'Enhanced SSML with prosody',
+        'Phrase Hints for business terms',
         'VAD-based Endpointing',
-        'Barge-in Support'
+        'Barge-in Support',
+        'Full Transcript Saving',
+        'AI Call Summarization',
+        'Customer Info Extraction'
       ],
     }),
     { 
