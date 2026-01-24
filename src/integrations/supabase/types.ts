@@ -95,10 +95,13 @@ export type Database = {
       calls: {
         Row: {
           appointment_scheduled: string | null
+          call_summary: string | null
           call_type: string
           caller_name: string | null
           caller_phone: string | null
           created_at: string
+          customer_name: string | null
+          customer_topic: string | null
           duration_seconds: number | null
           id: string
           language: string | null
@@ -109,10 +112,13 @@ export type Database = {
         }
         Insert: {
           appointment_scheduled?: string | null
+          call_summary?: string | null
           call_type?: string
           caller_name?: string | null
           caller_phone?: string | null
           created_at?: string
+          customer_name?: string | null
+          customer_topic?: string | null
           duration_seconds?: number | null
           id?: string
           language?: string | null
@@ -123,10 +129,13 @@ export type Database = {
         }
         Update: {
           appointment_scheduled?: string | null
+          call_summary?: string | null
           call_type?: string
           caller_name?: string | null
           caller_phone?: string | null
           created_at?: string
+          customer_name?: string | null
+          customer_topic?: string | null
           duration_seconds?: number | null
           id?: string
           language?: string | null
