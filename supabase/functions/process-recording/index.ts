@@ -127,10 +127,16 @@ serve(async (req) => {
     const recordingUrl = formData.get('RecordingUrl') as string;
     const recordingSid = formData.get('RecordingSid') as string;
     const callSid = formData.get('CallSid') as string;
-    const from = formData.get('From') as string;
-    const to = formData.get('To') as string;
+    const from = formData.get('From') as string | null;
+    const to = formData.get('To') as string | null;
 
     console.log('Processing recording:', { recordingSid, callSid, from, to, recordingUrl });
+
+    // If this is just a status callback without from/to, ignore it
+    if (!to && recordingUrl) {
+      console.log('Status callback received, ignoring');
+      return new Response('OK', { headers: corsHeaders });
+    }
 
     if (!recordingUrl) {
       console.log('No recording URL, returning gather');
@@ -164,7 +170,7 @@ serve(async (req) => {
     const accessToken = await getAccessToken(credentials);
 
     // Normalize phone number for lookup
-    const normalizedTo = to.replace(/\s+/g, '').replace(/-/g, '');
+    const normalizedTo = to ? to.replace(/\s+/g, '').replace(/-/g, '') : '';
     
     // Get phone number and user info
     const { data: phoneData, error: phoneError } = await supabase

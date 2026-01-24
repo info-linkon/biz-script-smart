@@ -329,19 +329,65 @@ serve(async (req) => {
 
     // Create intents
     const intents = [
+      // Greeting intent
+      {
+        displayName: "greeting",
+        trainingPhrases: language === 'he' ? [
+          { parts: [{ text: "שלום" }], repeatCount: 1 },
+          { parts: [{ text: "היי" }], repeatCount: 1 },
+          { parts: [{ text: "בוקר טוב" }], repeatCount: 1 },
+          { parts: [{ text: "ערב טוב" }], repeatCount: 1 },
+          { parts: [{ text: "אהלן" }], repeatCount: 1 },
+          { parts: [{ text: "הלו" }], repeatCount: 1 },
+          { parts: [{ text: "צהריים טובים" }], repeatCount: 1 },
+          { parts: [{ text: "מה שלומך" }], repeatCount: 1 },
+          { parts: [{ text: "מה נשמע" }], repeatCount: 1 }
+        ] : language === 'ar' ? [
+          { parts: [{ text: "مرحبا" }], repeatCount: 1 },
+          { parts: [{ text: "السلام عليكم" }], repeatCount: 1 },
+          { parts: [{ text: "صباح الخير" }], repeatCount: 1 },
+          { parts: [{ text: "مساء الخير" }], repeatCount: 1 },
+          { parts: [{ text: "أهلا" }], repeatCount: 1 }
+        ] : [
+          { parts: [{ text: "Hello" }], repeatCount: 1 },
+          { parts: [{ text: "Hi" }], repeatCount: 1 },
+          { parts: [{ text: "Good morning" }], repeatCount: 1 },
+          { parts: [{ text: "Good evening" }], repeatCount: 1 },
+          { parts: [{ text: "Hey" }], repeatCount: 1 }
+        ]
+      },
+      // Schedule appointment intent - expanded
       {
         displayName: "schedule.appointment",
         trainingPhrases: language === 'he' ? [
           { parts: [{ text: "אני רוצה לקבוע פגישה" }], repeatCount: 1 },
           { parts: [{ text: "אפשר לקבוע תור" }], repeatCount: 1 },
           { parts: [{ text: "מתי יש לכם מקום פנוי" }], repeatCount: 1 },
-          { parts: [{ text: "אני רוצה להזמין תור" }], repeatCount: 1 }
+          { parts: [{ text: "אני רוצה להזמין תור" }], repeatCount: 1 },
+          { parts: [{ text: "אני צריך לקבוע תור" }], repeatCount: 1 },
+          { parts: [{ text: "יש תור פנוי" }], repeatCount: 1 },
+          { parts: [{ text: "אני רוצה לבוא אליכם" }], repeatCount: 1 },
+          { parts: [{ text: "איך אפשר לקבוע" }], repeatCount: 1 },
+          { parts: [{ text: "בוא נקבע פגישה" }], repeatCount: 1 },
+          { parts: [{ text: "אפשר להזמין" }], repeatCount: 1 },
+          { parts: [{ text: "רוצה לקבוע" }], repeatCount: 1 },
+          { parts: [{ text: "צריך תור" }], repeatCount: 1 },
+          { parts: [{ text: "אפשר לקבוע משהו" }], repeatCount: 1 },
+          { parts: [{ text: "אני מעוניין לקבוע" }], repeatCount: 1 },
+          { parts: [{ text: "אפשר להירשם" }], repeatCount: 1 }
         ] : language === 'ar' ? [
           { parts: [{ text: "أريد حجز موعد" }], repeatCount: 1 },
-          { parts: [{ text: "هل يمكنني حجز موعد" }], repeatCount: 1 }
+          { parts: [{ text: "هل يمكنني حجز موعد" }], repeatCount: 1 },
+          { parts: [{ text: "أحتاج إلى موعد" }], repeatCount: 1 },
+          { parts: [{ text: "هل هناك موعد متاح" }], repeatCount: 1 },
+          { parts: [{ text: "أريد أن آتي إليكم" }], repeatCount: 1 }
         ] : [
           { parts: [{ text: "I want to schedule an appointment" }], repeatCount: 1 },
-          { parts: [{ text: "Can I book a meeting" }], repeatCount: 1 }
+          { parts: [{ text: "Can I book a meeting" }], repeatCount: 1 },
+          { parts: [{ text: "I need to make an appointment" }], repeatCount: 1 },
+          { parts: [{ text: "Is there an available slot" }], repeatCount: 1 },
+          { parts: [{ text: "I'd like to book" }], repeatCount: 1 },
+          { parts: [{ text: "Can I schedule something" }], repeatCount: 1 }
         ],
         parameters: [
           {
@@ -358,32 +404,120 @@ serve(async (req) => {
           }
         ]
       },
+      // Check availability intent - expanded
       {
         displayName: "check.availability",
         trainingPhrases: language === 'he' ? [
           { parts: [{ text: "מתי אתם פנויים" }], repeatCount: 1 },
           { parts: [{ text: "מה הזמינות שלכם" }], repeatCount: 1 },
-          { parts: [{ text: "מתי אפשר לבוא" }], repeatCount: 1 }
+          { parts: [{ text: "מתי אפשר לבוא" }], repeatCount: 1 },
+          { parts: [{ text: "באיזה שעות אתם עובדים" }], repeatCount: 1 },
+          { parts: [{ text: "מה שעות הפעילות" }], repeatCount: 1 },
+          { parts: [{ text: "עד מתי אתם פתוחים" }], repeatCount: 1 },
+          { parts: [{ text: "מתי אתם פותחים" }], repeatCount: 1 },
+          { parts: [{ text: "באיזה ימים אתם עובדים" }], repeatCount: 1 },
+          { parts: [{ text: "אתם פתוחים היום" }], repeatCount: 1 },
+          { parts: [{ text: "אתם עובדים בשבת" }], repeatCount: 1 },
+          { parts: [{ text: "מתי אתם סוגרים" }], repeatCount: 1 },
+          { parts: [{ text: "אתם פתוחים עכשיו" }], repeatCount: 1 },
+          { parts: [{ text: "מה השעות שלכם" }], repeatCount: 1 },
+          { parts: [{ text: "באיזה שעות אתם פתוחים" }], repeatCount: 1 },
+          { parts: [{ text: "מתי אפשר להגיע" }], repeatCount: 1 },
+          { parts: [{ text: "יש לכם פנוי היום" }], repeatCount: 1 },
+          { parts: [{ text: "יש מקום היום" }], repeatCount: 1 },
+          { parts: [{ text: "אתם עובדים בערב" }], repeatCount: 1 },
+          { parts: [{ text: "אתם עובדים בבוקר" }], repeatCount: 1 }
         ] : language === 'ar' ? [
           { parts: [{ text: "متى تكونون متاحين" }], repeatCount: 1 },
-          { parts: [{ text: "ما هي أوقات العمل" }], repeatCount: 1 }
+          { parts: [{ text: "ما هي أوقات العمل" }], repeatCount: 1 },
+          { parts: [{ text: "في أي ساعات تعملون" }], repeatCount: 1 },
+          { parts: [{ text: "هل أنتم مفتوحون اليوم" }], repeatCount: 1 },
+          { parts: [{ text: "متى تفتحون" }], repeatCount: 1 },
+          { parts: [{ text: "متى تغلقون" }], repeatCount: 1 }
         ] : [
           { parts: [{ text: "When are you available" }], repeatCount: 1 },
-          { parts: [{ text: "What are your working hours" }], repeatCount: 1 }
+          { parts: [{ text: "What are your working hours" }], repeatCount: 1 },
+          { parts: [{ text: "What time do you open" }], repeatCount: 1 },
+          { parts: [{ text: "What time do you close" }], repeatCount: 1 },
+          { parts: [{ text: "Are you open today" }], repeatCount: 1 },
+          { parts: [{ text: "Do you work on weekends" }], repeatCount: 1 }
         ]
       },
+      // Business info intent - expanded
       {
         displayName: "business.info",
         trainingPhrases: language === 'he' ? [
           { parts: [{ text: "מה השירותים שלכם" }], repeatCount: 1 },
           { parts: [{ text: "ספר לי על העסק" }], repeatCount: 1 },
-          { parts: [{ text: "מה אתם מציעים" }], repeatCount: 1 }
+          { parts: [{ text: "מה אתם מציעים" }], repeatCount: 1 },
+          { parts: [{ text: "איפה אתם נמצאים" }], repeatCount: 1 },
+          { parts: [{ text: "מה הכתובת שלכם" }], repeatCount: 1 },
+          { parts: [{ text: "כמה זה עולה" }], repeatCount: 1 },
+          { parts: [{ text: "מה המחירים" }], repeatCount: 1 },
+          { parts: [{ text: "איך מגיעים אליכם" }], repeatCount: 1 },
+          { parts: [{ text: "מה אתם עושים" }], repeatCount: 1 },
+          { parts: [{ text: "מה העסק שלכם" }], repeatCount: 1 },
+          { parts: [{ text: "איזה שירותים יש לכם" }], repeatCount: 1 },
+          { parts: [{ text: "מה אפשר לעשות אצלכם" }], repeatCount: 1 },
+          { parts: [{ text: "יש לכם מחירון" }], repeatCount: 1 },
+          { parts: [{ text: "כמה עולה טיפול" }], repeatCount: 1 }
         ] : language === 'ar' ? [
           { parts: [{ text: "ما هي خدماتكم" }], repeatCount: 1 },
-          { parts: [{ text: "أخبرني عن العمل" }], repeatCount: 1 }
+          { parts: [{ text: "أخبرني عن العمل" }], repeatCount: 1 },
+          { parts: [{ text: "أين أنتم" }], repeatCount: 1 },
+          { parts: [{ text: "ما هو العنوان" }], repeatCount: 1 },
+          { parts: [{ text: "كم يكلف" }], repeatCount: 1 },
+          { parts: [{ text: "ما هي الأسعار" }], repeatCount: 1 }
         ] : [
           { parts: [{ text: "What services do you offer" }], repeatCount: 1 },
-          { parts: [{ text: "Tell me about your business" }], repeatCount: 1 }
+          { parts: [{ text: "Tell me about your business" }], repeatCount: 1 },
+          { parts: [{ text: "Where are you located" }], repeatCount: 1 },
+          { parts: [{ text: "What is your address" }], repeatCount: 1 },
+          { parts: [{ text: "How much does it cost" }], repeatCount: 1 },
+          { parts: [{ text: "What are your prices" }], repeatCount: 1 }
+        ]
+      },
+      // Thanks intent
+      {
+        displayName: "thanks",
+        trainingPhrases: language === 'he' ? [
+          { parts: [{ text: "תודה" }], repeatCount: 1 },
+          { parts: [{ text: "תודה רבה" }], repeatCount: 1 },
+          { parts: [{ text: "מעולה תודה" }], repeatCount: 1 },
+          { parts: [{ text: "אחלה תודה" }], repeatCount: 1 },
+          { parts: [{ text: "מושלם תודה" }], repeatCount: 1 },
+          { parts: [{ text: "יופי תודה" }], repeatCount: 1 }
+        ] : language === 'ar' ? [
+          { parts: [{ text: "شكرا" }], repeatCount: 1 },
+          { parts: [{ text: "شكرا جزيلا" }], repeatCount: 1 },
+          { parts: [{ text: "ممتاز شكرا" }], repeatCount: 1 }
+        ] : [
+          { parts: [{ text: "Thank you" }], repeatCount: 1 },
+          { parts: [{ text: "Thanks" }], repeatCount: 1 },
+          { parts: [{ text: "Great thanks" }], repeatCount: 1 }
+        ]
+      },
+      // Goodbye intent
+      {
+        displayName: "goodbye",
+        trainingPhrases: language === 'he' ? [
+          { parts: [{ text: "להתראות" }], repeatCount: 1 },
+          { parts: [{ text: "ביי" }], repeatCount: 1 },
+          { parts: [{ text: "יום טוב" }], repeatCount: 1 },
+          { parts: [{ text: "שיהיה יום טוב" }], repeatCount: 1 },
+          { parts: [{ text: "נתראה" }], repeatCount: 1 },
+          { parts: [{ text: "תהיה בריא" }], repeatCount: 1 },
+          { parts: [{ text: "כל טוב" }], repeatCount: 1 }
+        ] : language === 'ar' ? [
+          { parts: [{ text: "مع السلامة" }], repeatCount: 1 },
+          { parts: [{ text: "باي" }], repeatCount: 1 },
+          { parts: [{ text: "إلى اللقاء" }], repeatCount: 1 },
+          { parts: [{ text: "يوم سعيد" }], repeatCount: 1 }
+        ] : [
+          { parts: [{ text: "Goodbye" }], repeatCount: 1 },
+          { parts: [{ text: "Bye" }], repeatCount: 1 },
+          { parts: [{ text: "Have a good day" }], repeatCount: 1 },
+          { parts: [{ text: "See you" }], repeatCount: 1 }
         ]
       }
     ];
