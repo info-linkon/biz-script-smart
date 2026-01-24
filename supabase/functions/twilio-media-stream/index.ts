@@ -445,13 +445,109 @@ async function getAIResponse(
   }
 }
 
-// Build system prompt from business info - ISRAELI SPONTANEOUS STYLE
-// Supports both male and female agent voices with appropriate Hebrew grammar
+// Build system prompt from business info - MULTILINGUAL SPONTANEOUS STYLE
+// Supports Hebrew, Arabic, and English based on detected customer language
+// Supports both male and female agent voices with appropriate grammar
 function buildSystemPrompt(state: ConversationState): string {
-  const { businessInfo, customerName, voiceGender } = state;
+  const { businessInfo, customerName, voiceGender, detectedLanguage } = state;
   
   // Agent's own gender - affects how the agent refers to itself
   const isAgentFemale = voiceGender === 'FEMALE';
+  
+  // Detect customer language for response matching
+  const customerLanguage = detectedLanguage?.startsWith('ar') 
+    ? 'arabic' 
+    : detectedLanguage?.startsWith('en') 
+    ? 'english' 
+    : 'hebrew';
+  
+  console.log('🌍 Building prompt for language:', customerLanguage, '(detected:', detectedLanguage, ')');
+  
+  // === ARABIC PROMPT ===
+  if (customerLanguage === 'arabic') {
+    const agentRole = isAgentFemale ? 'انتي ممثلة' : 'انت ممثل';
+    const agentStyle = isAgentFemale ? 'احكي كأنك صديقة على التلفون' : 'احكي كأنك صديق على التلفون';
+    
+    return `${agentRole} ${businessInfo.name}. ${agentStyle}
+
+## اسلوب الكلام:
+- جمل قصيرة. ماكسيموم 10-15 كلمة بالرد
+- عربي فلسطيني/اسرائيلي طبيعي - مش فصحى
+- كلمات ربط طبيعية: "طيب", "ماشي", "اوكي", "تمام", "يعني"
+- ردود قصيرة: "اكيد", "اه", "تمام", "منيح", "خلص"
+
+## امثلة:
+❌ لا: "انا سعيد جدا لمساعدتك اليوم في اي سؤال"
+✅ نعم: "اهلا! كيف ممكن اساعدك؟"
+
+❌ لا: "سأقوم بفحص المواعيد المتاحة لك"
+✅ نعم: "طيب لحظة ابص. امتى فاضي؟"
+
+## قوانين:
+1. أبدا لا تقول انك AI/ذكاء اصطناعي
+2. ${customerName ? `اسم الزبون: ${customerName}. استخدم الاسم بطبيعية` : 'اسأل عن الاسم اذا ما قال'}
+3. ردود قصيرة! هاي مكالمة تلفون مش ايميل
+4. ${isAgentFemale ? 'ما بتعرفي' : 'ما بتعرف'} شي؟ "خليني اتأكد وبرجعلك" - وبس
+5. بدون ايموجي
+
+## عن المصلحة:
+${businessInfo.name}
+${businessInfo.phoneNumber ? `تلفون: ${businessInfo.phoneNumber}` : ''}
+${businessInfo.services ? `خدمات: ${businessInfo.services}` : ''}
+
+${businessInfo.faq ? `## أسئلة شائعة:\n${businessInfo.faq}` : ''}
+
+${businessInfo.customPrompt ? `## تعليمات اضافية:\n${businessInfo.customPrompt}` : ''}
+
+## حالة المكالمة:
+${state.customerTopic ? `موضوع: ${state.customerTopic}` : ''}
+${state.customerRequests.length > 0 ? `طلبات: ${state.customerRequests.join(', ')}` : ''}
+دور: ${state.turnCount + 1}`;
+  }
+  
+  // === ENGLISH PROMPT ===
+  if (customerLanguage === 'english') {
+    const agentRole = isAgentFemale ? "You're a friendly representative of" : "You're a friendly representative of";
+    const agentStyle = "Talk like a real person on the phone - casual, warm, natural.";
+    
+    return `${agentRole} ${businessInfo.name}. ${agentStyle}
+
+## Speaking style:
+- Short sentences. Max 10-15 words per response.
+- Natural conversation - not robotic, not reading from a script.
+- Casual connectors: "okay", "so", "right", "sure", "got it"
+- Short responses: "absolutely", "yeah", "sure thing", "no problem"
+
+## Examples:
+❌ No: "I am very pleased to assist you today with any questions you may have"
+✅ Yes: "Hey! How can I help?"
+
+❌ No: "I shall proceed to verify the availability of appointments for you"
+✅ Yes: "Let me check. When works for you?"
+
+## Rules:
+1. Never say you're an AI/language model
+2. ${customerName ? `Customer: ${customerName}. Use their name naturally` : 'Ask for their name if they haven\'t said it'}
+3. Keep it short! This is a phone call, not an email
+4. Don't know something? "Let me check and get back to you" - that's it
+5. No emojis
+
+## About the business:
+${businessInfo.name}
+${businessInfo.phoneNumber ? `Phone: ${businessInfo.phoneNumber}` : ''}
+${businessInfo.services ? `Services: ${businessInfo.services}` : ''}
+
+${businessInfo.faq ? `## FAQ:\n${businessInfo.faq}` : ''}
+
+${businessInfo.customPrompt ? `## Additional instructions:\n${businessInfo.customPrompt}` : ''}
+
+## Call status:
+${state.customerTopic ? `Topic: ${state.customerTopic}` : ''}
+${state.customerRequests.length > 0 ? `Requests: ${state.customerRequests.join(', ')}` : ''}
+Turn: ${state.turnCount + 1}`;
+  }
+  
+  // === HEBREW PROMPT (default) ===
   const agentRole = isAgentFemale ? 'את נציגה של' : 'אתה נציג של';
   const agentStyle = isAgentFemale 
     ? 'כמו חברה בטלפון - לא רובוטית, לא קוראת מדף.'
@@ -1155,10 +1251,10 @@ async function processAudioBuffer(
   }
 }
 
-// Build phrase hints from business data
+// Build phrase hints from business data - MULTILINGUAL
 function buildPhraseHints(profile: any, script: any): string[] {
   const hints: string[] = [
-    // Common business terms
+    // Hebrew business terms
     'פגישה',
     'תור',
     'הזמנה',
@@ -1166,6 +1262,55 @@ function buildPhraseHints(profile: any, script: any): string[] {
     'שירות',
     'יועץ',
     'ייעוץ',
+    // Hebrew greetings
+    'שלום',
+    'היי',
+    'בוקר טוב',
+    'ערב טוב',
+    'תודה',
+    'בבקשה',
+    
+    // Arabic greetings and common phrases
+    'مرحبا',
+    'اهلا',
+    'شلون',
+    'كيف حالك',
+    'شكرا',
+    'عفوا',
+    'صباح الخير',
+    'مساء الخير',
+    // Arabic business terms
+    'موعد',
+    'دور',
+    'حجز',
+    'سعر',
+    'خدمة',
+    // Arabic time expressions
+    'بكرا',
+    'اليوم',
+    'الساعة',
+    'بعد الظهر',
+    'الصبح',
+    // Arabic conversation
+    'ايوا',
+    'اه',
+    'لا',
+    'اكيد',
+    'طيب',
+    'ماشي',
+    'تمام',
+    'يعني',
+    'بدي',
+    'عايز',
+    
+    // English common phrases
+    'appointment',
+    'schedule',
+    'booking',
+    'price',
+    'service',
+    'tomorrow',
+    'today',
   ];
   
   // Add business name if available
@@ -1209,7 +1354,7 @@ function buildPhraseHints(profile: any, script: any): string[] {
     }
   }
   
-  console.log('📢 Phrase hints:', hints);
+  console.log('📢 Phrase hints (', hints.length, 'terms including Hebrew, Arabic, English)');
   return hints;
 }
 
