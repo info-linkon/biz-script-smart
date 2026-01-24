@@ -1,8 +1,11 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-// This bridge now uses Google Cloud STT via the process-recording function
-// instead of Twilio's built-in speech recognition which doesn't support Hebrew
+// This bridge now supports TWO modes:
+// 1. Real-time Streaming (via WebSocket Media Streams) - for natural conversation
+// 2. Record-based (via process-recording) - fallback for debugging
+
+const USE_STREAMING = true; // Set to false to use Record-based flow
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -73,7 +76,7 @@ serve(async (req) => {
                       'Google.en-US-Wavenet-D';
     const langCode = language === 'he' ? 'he-IL' : language === 'ar' ? 'ar-XA' : 'en-US';
 
-    // If this is the initial call (no speech result), greet and gather
+    // If this is the initial call (no speech result), greet and start conversation
     if (!speechResult) {
       const greeting = script?.greeting_message || 
         (language === 'he' ? `שלום, הגעת ל${profile?.business_name || 'העסק'}. איך אוכל לעזור לך?` :
@@ -89,9 +92,27 @@ serve(async (req) => {
         language
       });
 
-      // Use Record instead of Gather - this sends audio to process-recording 
-      // which uses Google Cloud STT for proper Hebrew/Arabic recognition
-      const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+      let twiml: string;
+      
+      if (USE_STREAMING) {
+        // Real-time streaming mode - uses WebSocket for natural conversation
+        // The greeting will be sent via WebSocket, but we say a brief intro first
+        const streamUrl = `wss://${supabaseUrl.replace('https://', '')}/functions/v1/twilio-media-stream`;
+        
+        twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Connect>
+    <Stream url="${streamUrl}">
+      <Parameter name="userId" value="${userId}" />
+      <Parameter name="agentId" value="${profile?.dialogflow_agent_id || ''}" />
+      <Parameter name="language" value="${language}" />
+      <Parameter name="greeting" value="${encodeURIComponent(greeting)}" />
+    </Stream>
+  </Connect>
+</Response>`;
+      } else {
+        // Record-based mode - uses process-recording for Hebrew/Arabic recognition
+        twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Say language="${langCode}" voice="${voiceName}">${greeting}</Say>
   <Record maxLength="15" playBeep="true" timeout="2" 
@@ -99,6 +120,7 @@ serve(async (req) => {
     recordingStatusCallback="${supabaseUrl}/functions/v1/process-recording"/>
   <Say language="${langCode}" voice="${voiceName}">${language === 'he' ? 'לא שמעתי אותך. להתראות!' : 'I didn\'t hear you. Goodbye!'}</Say>
 </Response>`;
+      }
       
       return new Response(twiml, { 
         headers: { ...corsHeaders, 'Content-Type': 'text/xml' } 
