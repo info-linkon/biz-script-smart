@@ -222,15 +222,24 @@ async function transcribeAudio(
     boost: 15
   }] : [];
   
+  // Build config with enhanced model for English only
+  const config: any = {
+    encoding: 'MULAW',
+    sampleRateHertz: 8000,
+    languageCode: primaryLanguage,
+    enableAutomaticPunctuation: true,
+    profanityFilter: false,
+  };
+  
+  // Use enhanced telephony model only for English (phone_call doesn't support Hebrew/Arabic)
+  if (primaryLanguage === 'en-US') {
+    config.model = 'phone_call';
+    config.useEnhanced = true;
+    console.log('📞 Using enhanced phone_call model for English');
+  }
+  
   const requestBody: any = {
-    config: {
-      encoding: 'MULAW',
-      sampleRateHertz: 8000,
-      languageCode: primaryLanguage,
-      // Using default model - phone_call model doesn't support Hebrew (he-IL)
-      enableAutomaticPunctuation: true,
-      profanityFilter: false,
-    },
+    config,
     audio: {
       content: mulawAudioBase64,
     },
@@ -951,9 +960,9 @@ serve(async (req) => {
               customerTopic: null,
               customerRequests: [],
               turnCount: 0,
-              // Echo suppression
+              // Echo suppression (increased for better handling)
               lastTTSEndTime: 0,
-              echoGracePeriodMs: 600,
+              echoGracePeriodMs: 800,
               // VAD state
               isUserSpeaking: false,
               lastVoiceTime: 0,
@@ -987,8 +996,9 @@ serve(async (req) => {
             if (state) {
               await supabase.from('calls').insert({
                 user_id: userId,
-                call_type: 'inbound',
-                status: 'in-progress',
+                caller_phone: state.customerPhone || null,
+                call_type: 'voice',
+                status: 'in_progress',
                 language: state.language,
               });
             }

@@ -83,14 +83,8 @@ serve(async (req) => {
          language === 'ar' ? `مرحبا، وصلت إلى ${profile?.business_name || 'العمل'}. كيف يمكنني مساعدتك؟` :
          `Hello, you've reached ${profile?.business_name || 'our business'}. How can I help you?`);
 
-      // Log the call
-      await supabase.from('calls').insert({
-        user_id: userId,
-        caller_phone: from,
-        call_type: 'voice',
-        status: 'in_progress',
-        language
-      });
+      // Note: Call record is created by twilio-media-stream to avoid duplicates
+      console.log(`[BRIDGE] Call initiated for user ${userId} from ${from}`);
 
       let twiml: string;
       
