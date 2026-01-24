@@ -31,6 +31,7 @@ interface Script {
   custom_prompt: string | null;
   greeting_message: string | null;
   voice_id: string | null;
+  agent_voice_gender: string | null;
 }
 
 export default function Scripts() {
@@ -50,6 +51,7 @@ export default function Scripts() {
   const [language, setLanguage] = useState('he');
   const [customPrompt, setCustomPrompt] = useState('');
   const [greetingMessage, setGreetingMessage] = useState('');
+  const [agentVoiceGender, setAgentVoiceGender] = useState('female');
 
   useEffect(() => {
     if (user) {
@@ -73,6 +75,7 @@ export default function Scripts() {
         custom_prompt: script.custom_prompt || null,
         greeting_message: script.greeting_message || null,
         voice_id: script.voice_id || null,
+        agent_voice_gender: script.agent_voice_gender || 'female',
       }));
       
       setScripts(transformedData);
@@ -93,6 +96,7 @@ export default function Scripts() {
     setLanguage('he');
     setCustomPrompt('');
     setGreetingMessage('');
+    setAgentVoiceGender('female');
     setEditingScript(null);
   };
 
@@ -106,6 +110,7 @@ export default function Scripts() {
     setLanguage(script.language);
     setCustomPrompt(script.custom_prompt || '');
     setGreetingMessage(script.greeting_message || '');
+    setAgentVoiceGender(script.agent_voice_gender || 'female');
     setDialogOpen(true);
   };
 
@@ -129,6 +134,7 @@ export default function Scripts() {
         language,
         custom_prompt: customPrompt.trim() || null,
         greeting_message: greetingMessage.trim() || null,
+        agent_voice_gender: agentVoiceGender,
       };
 
       let savedScriptId: string | null = null;
@@ -311,7 +317,7 @@ export default function Scripts() {
                   />
                 </div>
 
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-3 gap-4">
                   <div className="space-y-2">
                     <Label>טון שיחה</Label>
                     <Select value={tone} onValueChange={setTone}>
@@ -335,6 +341,18 @@ export default function Scripts() {
                         <SelectItem value="he">עברית</SelectItem>
                         <SelectItem value="en">אנגלית</SelectItem>
                         <SelectItem value="both">שתיהן</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>קול הסוכן</Label>
+                    <Select value={agentVoiceGender} onValueChange={setAgentVoiceGender}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="female">קול נשי</SelectItem>
+                        <SelectItem value="male">קול גברי</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -454,6 +472,8 @@ export default function Scripts() {
                           {script.language === 'he' ? 'עברית' : script.language === 'en' ? 'אנגלית' : 'עברית ואנגלית'}
                           {' • '}
                           {script.tone === 'friendly' ? 'ידידותי' : script.tone === 'professional' ? 'מקצועי' : 'יומיומי'}
+                          {' • '}
+                          {script.agent_voice_gender === 'male' ? 'קול גברי' : 'קול נשי'}
                         </CardDescription>
                       </div>
                     </div>

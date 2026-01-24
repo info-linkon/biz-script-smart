@@ -122,7 +122,7 @@ const MULAW_DECODE_TABLE = [
   56, 48, 40, 32, 24, 16, 8, 0
 ];
 
-// Voice Activity Detection
+// Voice Activity Detection - improved thresholds for noise filtering
 function detectVoiceActivity(audioPayload: string, noiseFloor: number): { hasVoice: boolean; energy: number } {
   try {
     const audioBytes = Uint8Array.from(atob(audioPayload), c => c.charCodeAt(0));
@@ -134,8 +134,9 @@ function detectVoiceActivity(audioPayload: string, noiseFloor: number): { hasVoi
     }
     const rms = Math.sqrt(sumSquares / audioBytes.length);
     
-    const VOICE_THRESHOLD_DELTA = 1500;
-    const MIN_VOICE_ENERGY = 800;
+    // Increased thresholds for better noise filtering
+    const VOICE_THRESHOLD_DELTA = 1800;
+    const MIN_VOICE_ENERGY = 1000;
     
     const threshold = Math.max(noiseFloor + VOICE_THRESHOLD_DELTA, MIN_VOICE_ENERGY);
     const hasVoice = rms > threshold;
@@ -738,9 +739,16 @@ async function processAudioBuffer(
     state.sttConfidence = confidence;
     
     if (transcript) {
-      // Filter out very low confidence transcripts (likely noise)
-      if (confidence < 0.35 && transcript.length < 8) {
-        console.log('⚠️ Ignoring very low confidence transcript (likely noise):', transcript, '| Confidence:', (confidence*100).toFixed(0) + '%');
+      // Filter out low confidence transcripts (likely noise) - increased thresholds
+      if (confidence < 0.45 && transcript.length < 10) {
+        console.log('⚠️ Ignoring low confidence transcript (likely noise):', transcript, '| Confidence:', (confidence*100).toFixed(0) + '%');
+        return;
+      }
+      
+      // Grace period after greeting - ignore audio for 2 seconds to prevent echo/self-hearing
+      const GREETING_GRACE_PERIOD_MS = 2000;
+      if (state.greetingSentAt > 0 && Date.now() - state.greetingSentAt < GREETING_GRACE_PERIOD_MS) {
+        console.log('⏳ In greeting grace period, ignoring transcript:', transcript);
         return;
       }
       
@@ -1051,7 +1059,8 @@ serve(async (req) => {
               totalBufferBytes: 0,
               // Multi-language detection
               detectedLanguage: script?.language === 'he' ? 'he-IL' : script?.language === 'ar' ? 'ar-XA' : 'en-US',
-              voiceGender: 'FEMALE',
+              // Load voice gender from script settings (default to FEMALE)
+              voiceGender: script?.agent_voice_gender === 'male' ? 'MALE' : 'FEMALE',
               sttConfidence: 1.0,
               // Gender detection (neutral until detected)
               detectedGender: null,
