@@ -94,7 +94,7 @@ serve(async (req) => {
       const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Say language="${langCode}" voice="${voiceName}">${greeting}</Say>
-  <Record maxLength="30" playBeep="false" timeout="3" 
+  <Record maxLength="15" playBeep="true" timeout="2" 
     action="${supabaseUrl}/functions/v1/process-recording" 
     recordingStatusCallback="${supabaseUrl}/functions/v1/process-recording"/>
   <Say language="${langCode}" voice="${voiceName}">${language === 'he' ? 'לא שמעתי אותך. להתראות!' : 'I didn\'t hear you. Goodbye!'}</Say>

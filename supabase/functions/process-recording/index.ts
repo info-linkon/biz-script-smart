@@ -144,7 +144,7 @@ serve(async (req) => {
       const twiml = `<?xml version="1.0" encoding="UTF-8"?>
         <Response>
           <Say voice="Google.he-IL-Wavenet-A" language="he-IL">לא שמעתי. אפשר לחזור?</Say>
-          <Record maxLength="30" playBeep="false" timeout="3" 
+          <Record maxLength="15" playBeep="true" timeout="2" 
             action="${Deno.env.get('SUPABASE_URL')}/functions/v1/process-recording"
             recordingStatusCallback="${Deno.env.get('SUPABASE_URL')}/functions/v1/process-recording"/>
         </Response>`;
@@ -211,8 +211,8 @@ serve(async (req) => {
     const twilioAccountSid = Deno.env.get('TWILIO_ACCOUNT_SID');
     const twilioAuthToken = Deno.env.get('TWILIO_AUTH_TOKEN');
     
-    // Wait a moment for recording to be ready
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    // Minimal wait for recording availability (reduced from 1000ms)
+    await new Promise(resolve => setTimeout(resolve, 300));
 
     // Fetch the recording audio
     const audioUrl = `${recordingUrl}.wav`;
@@ -247,10 +247,9 @@ serve(async (req) => {
           config: {
             encoding: 'LINEAR16',
             sampleRateHertz: 8000,
-            languageCode: languageCode,
-            model: 'telephony',
-            alternativeLanguageCodes: ['he-IL', 'ar-IL', 'en-US'].filter(l => l !== languageCode),
-            enableAutomaticPunctuation: true,
+            languageCode: 'he-IL', // Fixed to Hebrew only - no alternativeLanguageCodes to avoid confusion
+            model: 'telephony_short', // Optimized for short recordings
+            useEnhanced: true, // Higher accuracy
           },
           audio: { content: audioBase64 },
         }),
@@ -274,7 +273,7 @@ serve(async (req) => {
       const twiml = `<?xml version="1.0" encoding="UTF-8"?>
         <Response>
           <Say voice="Google.he-IL-Wavenet-A" language="he-IL">לא שמעתי. אפשר לחזור?</Say>
-          <Record maxLength="30" playBeep="false" timeout="3" 
+          <Record maxLength="15" playBeep="true" timeout="2" 
             action="${supabaseUrl}/functions/v1/process-recording"
             recordingStatusCallback="${supabaseUrl}/functions/v1/process-recording"/>
         </Response>`;
@@ -308,7 +307,7 @@ serve(async (req) => {
       twiml = `<?xml version="1.0" encoding="UTF-8"?>
         <Response>
           <Say voice="Google.he-IL-Wavenet-A" language="he-IL">${dialogflowResult.responseText}</Say>
-          <Record maxLength="30" playBeep="false" timeout="3" 
+          <Record maxLength="15" playBeep="true" timeout="2" 
             action="${supabaseUrl}/functions/v1/process-recording"
             recordingStatusCallback="${supabaseUrl}/functions/v1/process-recording"/>
         </Response>`;
