@@ -294,10 +294,35 @@ serve(async (req) => {
 
     console.log('Syncing agent for user:', user_id, 'agent:', profile.dialogflow_agent_id);
 
-    // 1. Update generative settings
+    // 0. First, add 'en' as a supported language to the agent (required for LLM)
+    const addEnglishResponse = await fetch(
+      `https://dialogflow.googleapis.com/v3/${agentName}?updateMask=supportedLanguageCodes`,
+      {
+        method: 'PATCH',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          name: agentName,
+          supportedLanguageCodes: ['en']
+        })
+      }
+    );
+
+    if (addEnglishResponse.ok) {
+      console.log('Added English as supported language');
+    } else {
+      const errText = await addEnglishResponse.text();
+      console.log('Note: Could not add English language (may already exist):', errText);
+    }
+
+    // 1. Update generative settings with LLM
     const systemPrompt = buildSystemPrompt(profile, script, language);
+    
+    // CRITICAL: LLM only supports 'en' - the system prompt instructs it to respond in Hebrew/Arabic
     const generativeSettings = {
-      languageCode: languageCode,
+      languageCode: 'en',
       generativeSettings: {
         fallbackSettings: {
           selectedPrompt: systemPrompt,
@@ -308,12 +333,22 @@ serve(async (req) => {
               frozen: false
             }
           ]
+        },
+        llmModelSettings: {
+          model: "gemini-1.5-flash",
+          promptText: systemPrompt
+        },
+        knowledgeConnectorSettings: {
+          enabled: true,
+          searchConfig: {
+            maxSnippetCount: 3
+          }
         }
       }
     };
 
     const updateResponse = await fetch(
-      `https://dialogflow.googleapis.com/v3/${agentName}/generativeSettings?updateMask=fallbackSettings`,
+      `https://dialogflow.googleapis.com/v3/${agentName}/generativeSettings?updateMask=fallbackSettings,llmModelSettings,knowledgeConnectorSettings`,
       {
         method: 'PATCH',
         headers: {
@@ -328,10 +363,88 @@ serve(async (req) => {
       const errorText = await updateResponse.text();
       console.error('Failed to update generative settings:', errorText);
     } else {
-      console.log('Updated generative settings');
+      console.log('Updated generative settings with LLM');
     }
 
-    // 2. Update intents
+    // 2. Enable Generative Fallback on Default Start Flow
+    const defaultFlowPath = `${agentName}/flows/00000000-0000-0000-0000-000000000000`;
+    
+    // Get current flow
+    const flowResponse = await fetch(
+      `https://dialogflow.googleapis.com/v3/${defaultFlowPath}`,
+      {
+        headers: { 'Authorization': `Bearer ${accessToken}` }
+      }
+    );
+
+    if (flowResponse.ok) {
+      const flowData = await flowResponse.json();
+      const eventHandlers = flowData.eventHandlers || [];
+      
+      // Update event handlers with enableGenerativeFallback
+      const updatedEventHandlers = eventHandlers.map((handler: any) => {
+        if (handler.event === 'sys.no-match-default' || handler.event === 'sys.no-input-default') {
+          return {
+            ...handler,
+            triggerFulfillment: {
+              ...handler.triggerFulfillment,
+              messages: [], // Remove static messages
+              enableGenerativeFallback: true
+            }
+          };
+        }
+        return handler;
+      });
+
+      // Add handlers if they don't exist
+      const hasNoMatch = updatedEventHandlers.some((h: any) => h.event === 'sys.no-match-default');
+      const hasNoInput = updatedEventHandlers.some((h: any) => h.event === 'sys.no-input-default');
+
+      if (!hasNoMatch) {
+        updatedEventHandlers.push({
+          event: 'sys.no-match-default',
+          triggerFulfillment: {
+            messages: [],
+            enableGenerativeFallback: true
+          }
+        });
+      }
+
+      if (!hasNoInput) {
+        updatedEventHandlers.push({
+          event: 'sys.no-input-default',
+          triggerFulfillment: {
+            messages: [],
+            enableGenerativeFallback: true
+          }
+        });
+      }
+
+      // Update the flow
+      const flowUpdateResponse = await fetch(
+        `https://dialogflow.googleapis.com/v3/${defaultFlowPath}?updateMask=eventHandlers`,
+        {
+          method: 'PATCH',
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            name: defaultFlowPath,
+            eventHandlers: updatedEventHandlers
+          })
+        }
+      );
+
+      if (flowUpdateResponse.ok) {
+        console.log('Updated Flow with enableGenerativeFallback');
+      } else {
+        const flowError = await flowUpdateResponse.text();
+        console.error('Failed to update flow:', flowError);
+      }
+    }
+
+    // 3. Update intents
     const listIntentsResponse = await fetch(
       `https://dialogflow.googleapis.com/v3/${agentName}/intents`,
       {
@@ -400,7 +513,7 @@ serve(async (req) => {
       }
     }
 
-    // 3. Train the agent
+    // 4. Train the agent
     await fetch(
       `https://dialogflow.googleapis.com/v3/${agentName}/flows/00000000-0000-0000-0000-000000000000:train`,
       {
