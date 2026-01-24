@@ -96,7 +96,7 @@ serve(async (req) => {
         twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Connect>
-    <Stream url="${streamUrl}">
+    <Stream url="${streamUrl}" track="both_tracks">
       <Parameter name="userId" value="${userId}" />
       <Parameter name="agentId" value="${profile?.dialogflow_agent_id || ''}" />
       <Parameter name="language" value="${language}" />
