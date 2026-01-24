@@ -540,27 +540,11 @@ function getVoiceForLanguage(
   }
 }
 
-// ===== UPGRADED: Enhanced SSML for more natural speech =====
-function buildEnhancedSSML(text: string): string {
-  let ssmlText = text
-    // Better pauses after punctuation
-    .replace(/\./g, '.<break time="380ms"/>')
-    .replace(/,/g, ',<break time="200ms"/>')
-    .replace(/\?/g, '?<break time="480ms"/>')
-    .replace(/!/g, '!<break time="350ms"/>')
-    .replace(/:/g, ':<break time="250ms"/>')
-    // Emphasis on question words (Hebrew)
-    .replace(/(מה|איך|למה|מתי|איפה|מי|האם|כמה)/g, '<emphasis level="moderate">$1</emphasis>')
-    // Handle business names in English
-    .replace(/\b(LINKON|CRM|API|SMS)\b/gi, '<say-as interpret-as="characters">$1</say-as>')
-    // Numbers as ordinal/cardinal
-    .replace(/(\d+)/g, '<say-as interpret-as="cardinal">$1</say-as>');
-  
-  return `<speak>
-    <prosody rate="0.95" pitch="-1st">
-      ${ssmlText}
-    </prosody>
-  </speak>`;
+// ===== SIMPLIFIED: Plain text for TTS to avoid SSML parsing issues =====
+// Removed complex SSML that was being read as text ("480 milliseconds")
+function buildSimpleSSML(text: string): string {
+  // Just wrap in speak tags with basic prosody - no complex breaks
+  return `<speak><prosody rate="0.95">${text}</prosody></speak>`;
 }
 
 // Synthesize speech using Google TTS with enhanced SSML
@@ -576,11 +560,10 @@ async function synthesizeSpeech(
   const voiceConfig = getVoiceForLanguage(detectedLanguage, voiceGender, sttConfidence);
   console.log('🎤 Using voice:', voiceConfig.name, '| STT confidence:', (sttConfidence*100).toFixed(0) + '%');
   
-  // Use v1beta1 for Studio voices (Chirp 3 - highest quality)
-  const ttsUrl = 'https://texttospeech.googleapis.com/v1beta1/text:synthesize';
+  // Use v1 API with plain text - more reliable than v1beta1 with SSML
+  const ttsUrl = 'https://texttospeech.googleapis.com/v1/text:synthesize';
   
-  // Enhanced SSML for natural speech
-  const ssmlText = buildEnhancedSSML(text);
+  console.log('📝 TTS input text:', text);
   
   const response = await fetch(ttsUrl, {
     method: 'POST',
@@ -589,7 +572,7 @@ async function synthesizeSpeech(
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      input: { ssml: ssmlText },
+      input: { text },  // Plain text - no SSML to avoid parsing issues
       voice: {
         languageCode: voiceConfig.languageCode,
         name: voiceConfig.name,
