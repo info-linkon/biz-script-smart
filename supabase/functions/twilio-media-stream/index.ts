@@ -509,11 +509,11 @@ function getVoiceForLanguage(
   
   // If low confidence - always use Hebrew voice
   if (sttConfidence < 0.5 || !detectedLanguage) {
-    console.log('🎤 Low confidence or no language, using Hebrew Studio voice');
+    console.log('🎤 Low confidence or no language, using Hebrew Wavenet voice');
     return { 
       languageCode: 'he-IL', 
-      // Studio voices are highest quality (Chirp 3)
-      name: voiceGender === 'FEMALE' ? 'he-IL-Studio-A' : 'he-IL-Studio-B' 
+      // Wavenet voices for Hebrew (Studio not available in all projects)
+      name: voiceGender === 'FEMALE' ? 'he-IL-Wavenet-A' : 'he-IL-Wavenet-B' 
     };
   }
   
@@ -653,12 +653,19 @@ function sendAudioToTwilio(
   socket: WebSocket, 
   streamSid: string, 
   audioBase64: string
-): void {
+): boolean {
+  // Check WebSocket state before sending
+  if (socket.readyState !== WebSocket.OPEN) {
+    console.error('❌ WebSocket not open, state:', socket.readyState, '(0=CONNECTING, 1=OPEN, 2=CLOSING, 3=CLOSED)');
+    return false;
+  }
+  
   const chunkSize = 160; // 160 bytes = 20ms at 8kHz MULAW
   const audioBytes = Uint8Array.from(atob(audioBase64), c => c.charCodeAt(0));
   
-  console.log('🔊 Sending TTS audio, total bytes:', audioBytes.length);
+  console.log('🔊 Sending TTS audio to Twilio, total bytes:', audioBytes.length, 'WebSocket state: OPEN');
   
+  let chunksSent = 0;
   for (let i = 0; i < audioBytes.length; i += chunkSize) {
     const chunk = audioBytes.slice(i, Math.min(i + chunkSize, audioBytes.length));
     const chunkBase64 = btoa(String.fromCharCode(...chunk));
@@ -670,7 +677,10 @@ function sendAudioToTwilio(
         payload: chunkBase64,
       },
     }));
+    chunksSent++;
   }
+  
+  console.log('✅ Sent', chunksSent, 'audio chunks to Twilio');
   
   // Send mark to know when audio finished playing
   socket.send(JSON.stringify({
@@ -678,6 +688,8 @@ function sendAudioToTwilio(
     streamSid: streamSid,
     mark: { name: 'audio_complete' },
   }));
+  
+  return true;
 }
 
 // Process audio buffer and get response
@@ -1022,17 +1034,27 @@ serve(async (req) => {
               phraseHints,
             };
             
-            // Send initial greeting
+            // Send initial greeting with small delay for connection to stabilize
             if (accessToken && state) {
-              try {
-                state.isAgentSpeaking = true;
-                console.log('🎙️ Sending greeting:', state.greeting);
-                const greetingAudio = await synthesizeSpeech(state.greeting, accessToken);
-                sendAudioToTwilio(socket, state.streamSid, greetingAudio);
-              } catch (err) {
-                console.error('Error sending greeting:', err);
-                if (state) state.isAgentSpeaking = false;
-              }
+              const greetingState = state;
+              const greetingToken = accessToken;
+              
+              setTimeout(async () => {
+                try {
+                  greetingState.isAgentSpeaking = true;
+                  console.log('🎙️ Sending greeting after 500ms delay:', greetingState.greeting);
+                  console.log('🔌 WebSocket readyState before greeting:', socket.readyState);
+                  const greetingAudio = await synthesizeSpeech(greetingState.greeting, greetingToken);
+                  const sent = sendAudioToTwilio(socket, greetingState.streamSid, greetingAudio);
+                  if (!sent) {
+                    console.error('❌ Failed to send greeting - WebSocket not ready');
+                    greetingState.isAgentSpeaking = false;
+                  }
+                } catch (err) {
+                  console.error('Error sending greeting:', err);
+                  greetingState.isAgentSpeaking = false;
+                }
+              }, 500); // Wait 500ms for connection to stabilize
             }
             
             // Log call start
