@@ -4,11 +4,10 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Building2, ArrowLeft, Loader2, Zap, Radio, Check } from 'lucide-react';
+import { Building2, ArrowLeft, Loader2 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
-import { type VoiceProvider } from '@/lib/voice-provider';
 
 interface ProfileStepProps {
   initialData?: {
@@ -16,7 +15,6 @@ interface ProfileStepProps {
     business_type: string | null;
     phone: string | null;
     address: string | null;
-    voice_provider?: string | null;
   } | null;
   onComplete: () => void;
 }
@@ -35,27 +33,6 @@ const businessTypes = [
   { value: 'services', label: 'שירותים אחרים' },
 ];
 
-const VOICE_PROVIDERS = [
-  { 
-    id: 'elevenlabs' as VoiceProvider, 
-    name: 'ElevenLabs', 
-    description: 'קול טבעי ואיכותי במיוחד',
-    features: ['מהיר', 'עלות נמוכה', 'אנגלית מעולה'],
-    icon: Zap,
-    gradient: 'from-yellow-400 to-orange-500',
-    recommended: true,
-  },
-  { 
-    id: 'vapi' as VoiceProvider, 
-    name: 'Vapi.ai', 
-    description: 'תמיכה מלאה בעברית וערבית',
-    features: ['עברית מלאה', 'ערבית', 'Deepgram STT'],
-    icon: Radio,
-    gradient: 'from-blue-500 to-purple-600',
-    recommended: false,
-  },
-];
-
 export function ProfileStep({ initialData, onComplete }: ProfileStepProps) {
   const { user } = useAuth();
   const [saving, setSaving] = useState(false);
@@ -64,7 +41,6 @@ export function ProfileStep({ initialData, onComplete }: ProfileStepProps) {
     business_type: initialData?.business_type || '',
     phone: initialData?.phone || '',
     address: initialData?.address || '',
-    voice_provider: (initialData?.voice_provider as VoiceProvider) || 'elevenlabs',
   });
 
   useEffect(() => {
@@ -74,7 +50,6 @@ export function ProfileStep({ initialData, onComplete }: ProfileStepProps) {
         business_type: initialData.business_type || '',
         phone: initialData.phone || '',
         address: initialData.address || '',
-        voice_provider: (initialData.voice_provider as VoiceProvider) || 'elevenlabs',
       });
     }
   }, [initialData]);
@@ -104,7 +79,7 @@ export function ProfileStep({ initialData, onComplete }: ProfileStepProps) {
           business_type: formData.business_type,
           phone: formData.phone.trim() || null,
           address: formData.address.trim() || null,
-          voice_provider: formData.voice_provider,
+          voice_provider: 'google',
           updated_at: new Date().toISOString(),
         })
         .eq('user_id', user.id);
@@ -185,70 +160,6 @@ export function ProfileStep({ initialData, onComplete }: ProfileStepProps) {
               value={formData.address}
               onChange={(e) => setFormData(prev => ({ ...prev, address: e.target.value }))}
             />
-          </div>
-
-          {/* Voice Provider Selection */}
-          <div className="space-y-3">
-            <Label>ספק קול לסוכן</Label>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {VOICE_PROVIDERS.map((provider) => {
-                const Icon = provider.icon;
-                const isSelected = formData.voice_provider === provider.id;
-                
-                return (
-                  <div
-                    key={provider.id}
-                    className={`relative p-4 rounded-xl border-2 cursor-pointer transition-all ${
-                      isSelected
-                        ? 'border-primary bg-primary/5 shadow-md'
-                        : 'border-border hover:border-primary/50 hover:bg-muted/30'
-                    }`}
-                    onClick={() => setFormData(prev => ({ ...prev, voice_provider: provider.id }))}
-                  >
-                    {/* Selected indicator */}
-                    {isSelected && (
-                      <div className="absolute top-2 left-2 w-5 h-5 rounded-full bg-primary flex items-center justify-center">
-                        <Check className="h-3 w-3 text-primary-foreground" />
-                      </div>
-                    )}
-                    
-                    {/* Recommended badge */}
-                    {provider.recommended && (
-                      <div className="absolute top-2 right-2">
-                        <span className="text-xs bg-primary/10 text-primary px-2 py-0.5 rounded-full font-medium">
-                          מומלץ
-                        </span>
-                      </div>
-                    )}
-                    
-                    <div className="flex items-start gap-3 mt-2">
-                      <div className={`h-10 w-10 rounded-lg bg-gradient-to-br ${provider.gradient} flex items-center justify-center text-white`}>
-                        <Icon className="h-5 w-5" />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <h4 className="font-semibold">{provider.name}</h4>
-                        <p className="text-sm text-muted-foreground mt-0.5">
-                          {provider.description}
-                        </p>
-                        <div className="flex flex-wrap gap-1 mt-2">
-                          {provider.features.map((feature, i) => (
-                            <span 
-                              key={i} 
-                              className="text-xs px-2 py-0.5 rounded-full bg-muted text-muted-foreground"
-                            >
-                              {feature}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-            <p className="text-xs text-muted-foreground">
-              💡 בחר Vapi.ai אם רוב הלקוחות שלך מדברים עברית או ערבית. ניתן לשנות בהמשך.
-            </p>
           </div>
 
           <Button
