@@ -45,6 +45,43 @@ interface ConversationState {
   projectId: string;
   greeting: string;
   language: string;
+  // Barge-in support
+  isAgentSpeaking: boolean;
+  interruptedText: string | null;
+  vadHistory: number[]; // Track recent audio energy for voice detection
+}
+
+// Voice Activity Detection - detect if audio contains speech
+function detectVoiceActivity(audioPayload: string): { hasVoice: boolean; energy: number } {
+  try {
+    const audioBytes = Uint8Array.from(atob(audioPayload), c => c.charCodeAt(0));
+    
+    // Calculate RMS energy of the audio samples
+    let sumSquares = 0;
+    for (let i = 0; i < audioBytes.length; i++) {
+      // Mulaw samples are centered around 127-128, convert to signed
+      const sample = audioBytes[i] - 128;
+      sumSquares += sample * sample;
+    }
+    const rms = Math.sqrt(sumSquares / audioBytes.length);
+    
+    // Threshold for voice detection (tuned for telephony audio)
+    const VOICE_THRESHOLD = 15; // Adjust based on testing
+    const hasVoice = rms > VOICE_THRESHOLD;
+    
+    return { hasVoice, energy: rms };
+  } catch {
+    return { hasVoice: false, energy: 0 };
+  }
+}
+
+// Send clear event to stop audio playback on Twilio
+function clearTwilioAudio(socket: WebSocket, streamSid: string): void {
+  console.log('🔇 Barge-in: Clearing Twilio audio queue');
+  socket.send(JSON.stringify({
+    event: 'clear',
+    streamSid: streamSid,
+  }));
 }
 
 // Generate Google Cloud access token from service account
@@ -405,95 +442,147 @@ serve(async (req) => {
               projectId,
               greeting: script?.greeting_message || 'שלום, איך אוכל לעזור?',
               language: script?.language || 'he',
+              // Barge-in support
+              isAgentSpeaking: false,
+              interruptedText: null,
+              vadHistory: [],
             };
             
             // Send initial greeting
-            if (accessToken && state.streamSid) {
+            if (accessToken && state) {
               try {
+                state.isAgentSpeaking = true;
                 const greetingAudio = await synthesizeSpeech(state.greeting, accessToken);
                 sendAudioToTwilio(socket, state.streamSid, greetingAudio);
               } catch (err) {
                 console.error('Error sending greeting:', err);
+                if (state) state.isAgentSpeaking = false;
               }
             }
             
             // Log call start
-            await supabase.from('calls').insert({
-              user_id: userId,
-              call_type: 'inbound',
-              status: 'in-progress',
-              language: state.language,
-            });
+            if (state) {
+              await supabase.from('calls').insert({
+                user_id: userId,
+                call_type: 'inbound',
+                status: 'in-progress',
+                language: state.language,
+              });
+            }
             
             break;
             
           case 'media':
-            if (!state || state.isProcessing) break;
+            if (!state) break;
             
             // Collect audio chunks
             if (message.media?.payload) {
-              state.audioBuffer.push(message.media.payload);
-              state.lastAudioTime = Date.now();
+              // Check for voice activity (for barge-in detection)
+              const vad = detectVoiceActivity(message.media.payload);
               
-              // Reset silence detection
-              if (silenceTimer) {
-                clearTimeout(silenceTimer);
+              // Keep rolling window of VAD history (last 5 chunks ~100ms)
+              state.vadHistory.push(vad.energy);
+              if (state.vadHistory.length > 5) {
+                state.vadHistory.shift();
               }
               
-              // Start silence detection
-              silenceTimer = setTimeout(async () => {
-                if (!state || state.isProcessing || state.audioBuffer.length === 0) return;
+              // Calculate average energy over recent history
+              const avgEnergy = state.vadHistory.reduce((a, b) => a + b, 0) / state.vadHistory.length;
+              const hasConsistentVoice = avgEnergy > 12 && state.vadHistory.length >= 3;
+              
+              // BARGE-IN: If agent is speaking and user starts talking
+              if (state.isAgentSpeaking && hasConsistentVoice && !state.isProcessing) {
+                console.log('🎤 Barge-in detected! User interrupted agent. Energy:', avgEnergy.toFixed(1));
                 
-                state.isProcessing = true;
-                console.log('Processing audio buffer, chunks:', state.audioBuffer.length);
+                // Stop agent audio immediately
+                clearTwilioAudio(socket, state.streamSid);
+                state.isAgentSpeaking = false;
                 
-                try {
-                  // Combine all audio chunks
-                  const combinedAudio = state.audioBuffer.join('');
-                  state.audioBuffer = [];
-                  
-                  // Decode mulaw and convert to linear16
-                  const mulawBytes = Uint8Array.from(atob(combinedAudio), c => c.charCodeAt(0));
-                  const linear16 = mulawToLinear16(mulawBytes);
-                  const linear16Bytes = new Uint8Array(linear16.buffer);
-                  const linear16Base64 = btoa(String.fromCharCode(...linear16Bytes));
-                  
-                  // Refresh token if needed
-                  if (!accessToken) {
-                    accessToken = await getAccessToken(state.credentials);
-                  }
-                  
-                  // Transcribe
-                  const transcript = await transcribeAudio(linear16Base64, accessToken, state.projectId);
-                  console.log('Transcript:', transcript);
-                  
-                  if (transcript) {
-                    // Query Dialogflow
-                    const response = await queryDialogflow(
-                      transcript,
-                      state.sessionId,
-                      state.agentId,
-                      accessToken,
-                      state.projectId
-                    );
-                    
-                    console.log('Agent response:', response);
-                    
-                    // Synthesize and send response
-                    const responseAudio = await synthesizeSpeech(response, accessToken);
-                    sendAudioToTwilio(socket, state.streamSid, responseAudio);
-                  }
-                } catch (err) {
-                  console.error('Error processing audio:', err);
-                } finally {
-                  state.isProcessing = false;
+                // Clear any pending silence timer
+                if (silenceTimer) {
+                  clearTimeout(silenceTimer);
+                  silenceTimer = null;
                 }
-              }, SILENCE_THRESHOLD_MS);
+                
+                // Reset audio buffer to capture the interruption
+                state.audioBuffer = [];
+                state.vadHistory = [];
+              }
+              
+              // Only buffer audio when agent is not speaking (or after barge-in)
+              if (!state.isAgentSpeaking) {
+                state.audioBuffer.push(message.media.payload);
+                state.lastAudioTime = Date.now();
+                
+                // Reset silence detection
+                if (silenceTimer) {
+                  clearTimeout(silenceTimer);
+                }
+                
+                // Start silence detection - process after silence
+                silenceTimer = setTimeout(async () => {
+                  if (!state || state.isProcessing || state.audioBuffer.length === 0) return;
+                  
+                  state.isProcessing = true;
+                  console.log('Processing audio buffer, chunks:', state.audioBuffer.length);
+                  
+                  try {
+                    // Combine all audio chunks
+                    const combinedAudio = state.audioBuffer.join('');
+                    state.audioBuffer = [];
+                    
+                    // Decode mulaw and convert to linear16
+                    const mulawBytes = Uint8Array.from(atob(combinedAudio), c => c.charCodeAt(0));
+                    const linear16 = mulawToLinear16(mulawBytes);
+                    const linear16Bytes = new Uint8Array(linear16.buffer);
+                    const linear16Base64 = btoa(String.fromCharCode(...linear16Bytes));
+                    
+                    // Refresh token if needed
+                    if (!accessToken) {
+                      accessToken = await getAccessToken(state.credentials);
+                    }
+                    
+                    // Transcribe
+                    const transcript = await transcribeAudio(linear16Base64, accessToken, state.projectId);
+                    console.log('Transcript:', transcript);
+                    
+                    if (transcript) {
+                      // Query Dialogflow
+                      const response = await queryDialogflow(
+                        transcript,
+                        state.sessionId,
+                        state.agentId,
+                        accessToken,
+                        state.projectId
+                      );
+                      
+                      console.log('Agent response:', response);
+                      
+                      // Mark agent as speaking before sending audio
+                      state.isAgentSpeaking = true;
+                      state.vadHistory = []; // Reset VAD for barge-in detection
+                      
+                      // Synthesize and send response
+                      const responseAudio = await synthesizeSpeech(response, accessToken);
+                      sendAudioToTwilio(socket, state.streamSid, responseAudio);
+                    }
+                  } catch (err) {
+                    console.error('Error processing audio:', err);
+                  } finally {
+                    state.isProcessing = false;
+                  }
+                }, SILENCE_THRESHOLD_MS);
+              }
             }
             break;
             
           case 'mark':
             console.log('Mark received:', message.mark?.name);
+            // When audio playback completes, agent stops speaking
+            if (message.mark?.name === 'audio_complete' && state) {
+              state.isAgentSpeaking = false;
+              console.log('✅ Agent finished speaking, ready to listen');
+            }
             break;
             
           case 'stop':
@@ -527,6 +616,7 @@ serve(async (req) => {
     JSON.stringify({ 
       message: 'Twilio Media Stream WebSocket Handler',
       usage: 'Connect via WebSocket for real-time audio streaming',
+      features: ['Real-time STT', 'Dialogflow CX', 'TTS', 'Barge-in support'],
     }),
     { 
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
