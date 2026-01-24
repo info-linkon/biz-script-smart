@@ -339,14 +339,14 @@ serve(async (req) => {
     }
 
     const purchaseData = await purchaseResponse.json();
-    console.log('Number purchased:', purchaseData.phoneNumber);
+    console.log('Number purchased:', purchaseData.phone_number);
 
     // Step 4: Save phone number to database
     const { data: phoneRecord, error: phoneError } = await supabase
       .from('phone_numbers')
       .insert({
         user_id: userId,
-        phone_number: purchaseData.phoneNumber,
+        phone_number: purchaseData.phone_number,
         country_code: country_code,
         twilio_sid: purchaseData.sid,
         elevenlabs_phone_id: purchaseData.sid, // Using Twilio SID as the ID
@@ -365,7 +365,7 @@ serve(async (req) => {
     return new Response(
       JSON.stringify({ 
         success: true,
-        phone_number: purchaseData.phoneNumber,
+        phone_number: purchaseData.phone_number,
         twilio_sid: purchaseData.sid,
         dialogflow_agent_id: dialogflowAgentId,
         phone_record: phoneRecord,
