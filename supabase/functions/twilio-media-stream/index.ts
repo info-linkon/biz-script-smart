@@ -374,6 +374,9 @@ async function getAIResponse(
     // Clean up response - remove any unwanted AI phrases
     aiResponse = cleanAIResponse(aiResponse);
     
+    // Add natural filler words for Israeli spontaneous speech
+    aiResponse = addFillerWords(aiResponse, state.turnCount, state.detectedLanguage);
+    
     console.log('🤖 AI Response:', aiResponse);
     
     return { 
@@ -496,6 +499,87 @@ function extractCustomerInfo(text: string): { extractedName?: string; extractedP
   return { extractedName, extractedPhone, extractedTopic };
 }
 
+// Add natural filler words for Israeli spontaneous speech
+function addFillerWords(response: string, turnCount: number, detectedLanguage: string): string {
+  // Hebrew fillers - contextual based on situation
+  const hebrewFillers = {
+    thinking: ['אממ...', 'רגע...', 'אוקיי...', 'טוב...'],
+    confirming: ['כן,', 'בטח,', 'ברור,', 'אוקיי,'],
+    transitioning: ['אז,', 'יאללה,', 'טוב אז,', 'בסדר,'],
+    responding: ['תשמע,', 'תראה,', 'נו,', 'הנה,'],
+  };
+  
+  const arabicFillers = {
+    thinking: ['طيب...', 'لحظة...', 'امممم...'],
+    confirming: ['اكيد,', 'تمام,', 'ماشي,'],
+    responding: ['يعني,', 'شوف,', 'خلص,'],
+  };
+  
+  const englishFillers = {
+    thinking: ['Hmm...', 'Let me see...', 'Okay...', 'Right...'],
+    confirming: ['Sure,', 'Yeah,', 'Got it,', 'Alright,'],
+    responding: ['So,', 'Well,', 'Look,'],
+  };
+  
+  // Don't add fillers to very short responses or greetings
+  if (response.length < 20 || turnCount === 0) {
+    return response;
+  }
+  
+  // Skip if response already starts with a filler
+  const allFillers = [...hebrewFillers.thinking, ...hebrewFillers.confirming, 
+                      ...arabicFillers.thinking, ...englishFillers.thinking];
+  const startsWithFiller = allFillers.some(f => 
+    response.startsWith(f.replace('...', '').replace(',', ''))
+  );
+  if (startsWithFiller) {
+    return response;
+  }
+  
+  // Choose filler based on response content and language
+  const lang = detectedLanguage?.toLowerCase() || 'he';
+  let fillers: string[];
+  
+  if (lang.startsWith('ar')) {
+    // Arabic
+    if (response.includes('؟') || response.includes('?')) {
+      fillers = arabicFillers.thinking;
+    } else {
+      fillers = [...arabicFillers.confirming, ...arabicFillers.responding];
+    }
+  } else if (lang.startsWith('en')) {
+    // English
+    if (response.includes('?')) {
+      fillers = englishFillers.thinking;
+    } else {
+      fillers = [...englishFillers.confirming, ...englishFillers.responding];
+    }
+  } else {
+    // Hebrew (default)
+    if (response.includes('?') || response.includes('?')) {
+      fillers = hebrewFillers.thinking;
+    } else if (response.startsWith('כן') || response.startsWith('בטח') || response.startsWith('לא')) {
+      // Already has a natural start
+      return response;
+    } else {
+      // Mix of confirming and transitioning based on turn count
+      fillers = turnCount % 2 === 0 
+        ? hebrewFillers.confirming 
+        : hebrewFillers.transitioning;
+    }
+  }
+  
+  // Random selection (30% chance to add filler for naturalness)
+  if (Math.random() > 0.3) {
+    return response;
+  }
+  
+  const filler = fillers[Math.floor(Math.random() * fillers.length)];
+  console.log('💬 Added filler word:', filler);
+  
+  return `${filler} ${response}`;
+}
+
 // Clean AI response from unwanted phrases
 function cleanAIResponse(response: string): string {
   const unwantedPhrases = [
@@ -516,8 +600,7 @@ function cleanAIResponse(response: string): string {
   for (const phrase of unwantedPhrases) {
     if (response.toLowerCase().includes(phrase.toLowerCase())) {
       console.log('⚠️ Filtering unwanted phrase:', phrase);
-      // Return a generic friendly response
-      return 'שלום! איך אוכל לעזור לך היום?';
+      return 'שלום! איך אפשר לעזור?';
     }
   }
   
