@@ -534,8 +534,8 @@ function getVoiceForLanguage(
   } else {
     return { 
       languageCode: 'he-IL', 
-      // Studio voices for Hebrew (highest quality available)
-      name: voiceGender === 'FEMALE' ? 'he-IL-Studio-A' : 'he-IL-Studio-B' 
+      // Wavenet voices for Hebrew (Studio not available in all projects)
+      name: voiceGender === 'FEMALE' ? 'he-IL-Wavenet-A' : 'he-IL-Wavenet-B' 
     };
   }
 }
@@ -1169,10 +1169,10 @@ serve(async (req) => {
                 const lovableApiKey = Deno.env.get('LOVABLE_API_KEY');
                 let callSummary = '';
                 
-                console.log('📊 Call stats - History:', state.conversationHistory.length, 'turns, API key:', lovableApiKey ? 'present' : 'missing');
+                console.log('📊 Call stats - History:', state.conversationHistory.length, 'messages, API key:', lovableApiKey ? 'present' : 'missing');
                 
-                // Generate summary if we have at least 2 messages (1 turn = user + agent)
-                if (lovableApiKey && state.conversationHistory.length >= 2) {
+                // Generate summary if we have at least 1 message (even short calls deserve summaries)
+                if (lovableApiKey && state.conversationHistory.length >= 1) {
                   const summaryPrompt = `סכם את השיחה הטלפונית הבאה ב-2-3 משפטים קצרים בעברית. התמקד בעיקר: מה הלקוח רצה ומה סוכם.
 
 שיחה:
