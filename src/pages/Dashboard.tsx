@@ -75,7 +75,7 @@ export default function Dashboard() {
       // Fetch profile for provider info
       const { data: profile } = await supabase
         .from('profiles')
-        .select('voice_provider, elevenlabs_agent_id, vapi_assistant_id')
+        .select('voice_provider, elevenlabs_agent_id, vapi_assistant_id, dialogflow_agent_id')
         .eq('user_id', user!.id)
         .maybeSingle();
 
@@ -87,7 +87,7 @@ export default function Dashboard() {
         .eq('status', 'active')
         .maybeSingle();
 
-      const hasAgent = !!(profile?.elevenlabs_agent_id || profile?.vapi_assistant_id);
+      const hasAgent = !!(profile?.elevenlabs_agent_id || profile?.vapi_assistant_id || (profile as any)?.dialogflow_agent_id);
       
       setAgentStatus({
         hasAgent,
@@ -200,10 +200,20 @@ export default function Dashboard() {
   const hasLanguageData = stats.languageStats.he > 0 || stats.languageStats.ar > 0 || stats.languageStats.en > 0;
 
   const getProviderInfo = (provider: VoiceProvider | null) => {
+    if (provider === 'google') {
+      return {
+        name: 'Google Dialogflow',
+        icon: '🎯',
+        gradient: 'from-green-500 to-teal-600',
+        bgColor: 'bg-green-500/10',
+        textColor: 'text-green-600',
+        description: 'זיהוי עברית מצוין עם Chirp 3',
+      };
+    }
     if (provider === 'vapi') {
       return {
         name: 'Vapi.ai',
-        icon: Radio,
+        icon: '🌍',
         gradient: 'from-blue-500 to-purple-600',
         bgColor: 'bg-blue-500/10',
         textColor: 'text-blue-600',
@@ -212,8 +222,8 @@ export default function Dashboard() {
     }
     return {
       name: 'ElevenLabs',
-      icon: Zap,
-      gradient: 'from-yellow-400 to-orange-500',
+      icon: '⚡',
+      gradient: 'from-amber-400 to-orange-500',
       bgColor: 'bg-orange-500/10',
       textColor: 'text-orange-600',
       description: 'קול טבעי ואיכותי',
@@ -249,12 +259,8 @@ export default function Dashboard() {
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-4">
                   {/* Provider Icon */}
-                  <div className={`h-12 w-12 rounded-xl ${getProviderInfo(agentStatus.voiceProvider).bgColor} flex items-center justify-center`}>
-                    {agentStatus.voiceProvider === 'vapi' ? (
-                      <Radio className={`h-6 w-6 ${getProviderInfo(agentStatus.voiceProvider).textColor}`} />
-                    ) : (
-                      <Zap className={`h-6 w-6 ${getProviderInfo(agentStatus.voiceProvider).textColor}`} />
-                    )}
+                  <div className={`h-12 w-12 rounded-xl ${getProviderInfo(agentStatus.voiceProvider).bgColor} flex items-center justify-center text-2xl`}>
+                    {getProviderInfo(agentStatus.voiceProvider).icon}
                   </div>
                   
                   {/* Provider Info */}
