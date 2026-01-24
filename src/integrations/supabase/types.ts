@@ -206,6 +206,7 @@ export type Database = {
           elevenlabs_agent_id: string | null
           id: string
           phone: string | null
+          phone_number: string | null
           subscription_plan_id: string | null
           subscription_started_at: string | null
           subscription_status: string | null
@@ -223,6 +224,7 @@ export type Database = {
           elevenlabs_agent_id?: string | null
           id?: string
           phone?: string | null
+          phone_number?: string | null
           subscription_plan_id?: string | null
           subscription_started_at?: string | null
           subscription_status?: string | null
@@ -240,6 +242,7 @@ export type Database = {
           elevenlabs_agent_id?: string | null
           id?: string
           phone?: string | null
+          phone_number?: string | null
           subscription_plan_id?: string | null
           subscription_started_at?: string | null
           subscription_status?: string | null
