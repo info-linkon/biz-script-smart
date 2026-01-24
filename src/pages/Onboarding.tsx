@@ -64,7 +64,7 @@ export default function Onboarding() {
     );
   }
 
-  const hasAgent = !!(profile?.elevenlabs_agent_id);
+  const hasAgent = !!((profile as any)?.dialogflow_agent_id);
   
   const completedSteps = {
     profile: hasBusinessProfile,

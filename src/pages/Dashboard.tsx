@@ -5,11 +5,10 @@ import { Button } from '@/components/ui/button';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
-import { Phone, Calendar, FileText, TrendingUp, Clock, Mic, ArrowLeft, Languages, Zap, Radio, Settings } from 'lucide-react';
+import { Phone, Calendar, FileText, TrendingUp, Clock, Mic, ArrowLeft, Languages, Settings } from 'lucide-react';
 import { format } from 'date-fns';
 import { he } from 'date-fns/locale';
 import { OnboardingStatusCard } from '@/components/onboarding/OnboardingStatusCard';
-import { type VoiceProvider } from '@/lib/voice-provider';
 
 interface DashboardStats {
   totalCalls: number;
@@ -40,7 +39,6 @@ interface UpcomingAppointment {
 
 interface AgentStatus {
   hasAgent: boolean;
-  voiceProvider: VoiceProvider | null;
   phoneNumber: string | null;
 }
 
@@ -58,7 +56,6 @@ export default function Dashboard() {
   const [upcomingAppointments, setUpcomingAppointments] = useState<UpcomingAppointment[]>([]);
   const [agentStatus, setAgentStatus] = useState<AgentStatus>({
     hasAgent: false,
-    voiceProvider: null,
     phoneNumber: null,
   });
   const [loading, setLoading] = useState(true);
@@ -75,7 +72,7 @@ export default function Dashboard() {
       // Fetch profile for provider info
       const { data: profile } = await supabase
         .from('profiles')
-        .select('voice_provider, elevenlabs_agent_id, vapi_assistant_id, dialogflow_agent_id')
+        .select('dialogflow_agent_id')
         .eq('user_id', user!.id)
         .maybeSingle();
 
@@ -87,11 +84,10 @@ export default function Dashboard() {
         .eq('status', 'active')
         .maybeSingle();
 
-      const hasAgent = !!(profile?.elevenlabs_agent_id || profile?.vapi_assistant_id || (profile as any)?.dialogflow_agent_id);
+      const hasAgent = !!((profile as any)?.dialogflow_agent_id);
       
       setAgentStatus({
         hasAgent,
-        voiceProvider: (profile?.voice_provider as VoiceProvider) || null,
         phoneNumber: phoneNumber?.phone_number || null,
       });
     } catch (error) {
@@ -199,37 +195,6 @@ export default function Dashboard() {
 
   const hasLanguageData = stats.languageStats.he > 0 || stats.languageStats.ar > 0 || stats.languageStats.en > 0;
 
-  const getProviderInfo = (provider: VoiceProvider | null) => {
-    if (provider === 'google') {
-      return {
-        name: 'Google Dialogflow',
-        icon: '🎯',
-        gradient: 'from-green-500 to-teal-600',
-        bgColor: 'bg-green-500/10',
-        textColor: 'text-green-600',
-        description: 'זיהוי עברית מצוין עם Chirp 3',
-      };
-    }
-    if (provider === 'vapi') {
-      return {
-        name: 'Vapi.ai',
-        icon: '🌍',
-        gradient: 'from-blue-500 to-purple-600',
-        bgColor: 'bg-blue-500/10',
-        textColor: 'text-blue-600',
-        description: 'תמיכה מלאה בעברית וערבית',
-      };
-    }
-    return {
-      name: 'ElevenLabs',
-      icon: '⚡',
-      gradient: 'from-amber-400 to-orange-500',
-      bgColor: 'bg-orange-500/10',
-      textColor: 'text-orange-600',
-      description: 'קול טבעי ואיכותי',
-    };
-  };
-
   return (
     <AppLayout>
       <div className="space-y-6">
@@ -254,25 +219,25 @@ export default function Dashboard() {
         {/* Voice Provider Status Card */}
         {agentStatus.hasAgent && (
           <Card className="border-0 shadow-sm overflow-hidden">
-            <div className={`h-1 bg-gradient-to-r ${getProviderInfo(agentStatus.voiceProvider).gradient}`} />
+            <div className="h-1 bg-gradient-to-r from-green-500 to-teal-600" />
             <CardContent className="p-4">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-4">
                   {/* Provider Icon */}
-                  <div className={`h-12 w-12 rounded-xl ${getProviderInfo(agentStatus.voiceProvider).bgColor} flex items-center justify-center text-2xl`}>
-                    {getProviderInfo(agentStatus.voiceProvider).icon}
+                  <div className="h-12 w-12 rounded-xl bg-green-500/10 flex items-center justify-center text-2xl">
+                    🎯
                   </div>
                   
                   {/* Provider Info */}
                   <div>
                     <div className="flex items-center gap-2">
                       <h3 className="font-semibold">ספק קול פעיל</h3>
-                      <span className={`text-sm font-medium px-2 py-0.5 rounded-full ${getProviderInfo(agentStatus.voiceProvider).bgColor} ${getProviderInfo(agentStatus.voiceProvider).textColor}`}>
-                        {getProviderInfo(agentStatus.voiceProvider).name}
+                      <span className="text-sm font-medium px-2 py-0.5 rounded-full bg-green-500/10 text-green-600">
+                        Google Dialogflow CX
                       </span>
                     </div>
                     <p className="text-sm text-muted-foreground">
-                      {getProviderInfo(agentStatus.voiceProvider).description}
+                      זיהוי עברית מצוין עם Chirp 3
                     </p>
                   </div>
                 </div>
@@ -462,18 +427,12 @@ export default function Dashboard() {
                         <Clock className="h-4 w-4 text-accent-foreground" />
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className="font-medium truncate">{apt.title}</p>
-                        <p className="text-sm text-muted-foreground truncate">
-                          {apt.customer_name}
-                        </p>
+                        <p className="font-medium truncate">{apt.customer_name}</p>
+                        <p className="text-sm text-muted-foreground truncate">{apt.title}</p>
                       </div>
-                      <div className="text-left">
-                        <p className="text-sm font-medium">
-                          {format(new Date(apt.start_time), 'HH:mm', { locale: he })}
-                        </p>
-                        <p className="text-xs text-muted-foreground">
-                          {format(new Date(apt.start_time), 'dd/MM', { locale: he })}
-                        </p>
+                      <div className="text-xs text-muted-foreground text-left">
+                        <p>{format(new Date(apt.start_time), 'dd/MM', { locale: he })}</p>
+                        <p>{format(new Date(apt.start_time), 'HH:mm', { locale: he })}</p>
                       </div>
                     </div>
                   ))}
