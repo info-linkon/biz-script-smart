@@ -49,6 +49,11 @@ interface ConversationState {
   isAgentSpeaking: boolean;
   interruptedText: string | null;
   vadHistory: number[]; // Track recent audio energy for voice detection
+  // Conversation context for memory
+  conversationHistory: { role: 'user' | 'agent'; text: string; timestamp: number }[];
+  customerName: string | null;
+  customerPhone: string | null;
+  turnCount: number;
 }
 
 // Voice Activity Detection - detect if audio contains speech
@@ -246,17 +251,34 @@ async function transcribeAudio(
   return null;
 }
 
-// Query Dialogflow CX
+// Query Dialogflow CX with context
 async function queryDialogflow(
   text: string,
   sessionId: string,
   agentId: string,
   accessToken: string,
-  projectId: string
-): Promise<string> {
+  projectId: string,
+  conversationHistory: { role: string; text: string }[] = [],
+  customerName: string | null = null
+): Promise<{ response: string; extractedName?: string; extractedPhone?: string }> {
   console.log('Querying Dialogflow with:', text);
   
   const dialogflowUrl = `https://global-dialogflow.googleapis.com/v3/projects/${projectId}/locations/global/agents/${agentId}/sessions/${sessionId}:detectIntent`;
+  
+  // Build query parameters with context
+  const queryParams: Record<string, any> = {};
+  
+  // Add conversation context as parameters
+  if (conversationHistory.length > 0) {
+    queryParams['conversation_context'] = conversationHistory
+      .slice(-5) // Last 5 turns
+      .map(h => `${h.role === 'user' ? 'לקוח' : 'סוכן'}: ${h.text}`)
+      .join('\n');
+  }
+  
+  if (customerName) {
+    queryParams['customer_name'] = customerName;
+  }
   
   const response = await fetch(dialogflowUrl, {
     method: 'POST',
@@ -269,21 +291,62 @@ async function queryDialogflow(
         text: { text },
         languageCode: 'he',
       },
+      queryParams: {
+        parameters: queryParams
+      }
     }),
   });
 
   const data = await response.json();
   console.log('Dialogflow response:', JSON.stringify(data));
 
+  // Extract customer name from response if mentioned
+  let extractedName: string | undefined;
+  let extractedPhone: string | undefined;
+  
+  // Check for name extraction from introduction patterns
+  const namePatterns = [
+    /(?:אני|שמי|קוראים לי)\s+([א-ת]+)/,
+    /^([א-ת]+)\s+(?:פה|כאן|מדבר)/
+  ];
+  
+  for (const pattern of namePatterns) {
+    const match = text.match(pattern);
+    if (match) {
+      extractedName = match[1];
+      console.log('Extracted customer name:', extractedName);
+      break;
+    }
+  }
+  
+  // Check for phone number
+  const phonePattern = /(\d{9,10}|0\d{1,2}[-\s]?\d{7})/;
+  const phoneMatch = text.match(phonePattern);
+  if (phoneMatch) {
+    extractedPhone = phoneMatch[1].replace(/[-\s]/g, '');
+    console.log('Extracted phone:', extractedPhone);
+  }
+
+  let responseText = 'סליחה, לא הבנתי. אפשר לחזור?';
+  
   if (data.queryResult?.responseMessages) {
     for (const msg of data.queryResult.responseMessages) {
       if (msg.text?.text?.[0]) {
-        return msg.text.text[0];
+        responseText = msg.text.text[0];
+        break;
       }
     }
   }
   
-  return 'סליחה, לא הבנתי. אפשר לחזור?';
+  // Personalize response with customer name if available
+  if (extractedName && !customerName) {
+    // First time we learn the name - already handled by intent
+  } else if (customerName && responseText.includes('לקוח')) {
+    // Replace generic 'לקוח' with actual name
+    responseText = responseText.replace(/לקוח/g, customerName);
+  }
+  
+  return { response: responseText, extractedName, extractedPhone };
 }
 
 // Synthesize speech using Google TTS
@@ -446,6 +509,11 @@ serve(async (req) => {
               isAgentSpeaking: false,
               interruptedText: null,
               vadHistory: [],
+              // Conversation context
+              conversationHistory: [],
+              customerName: null,
+              customerPhone: null,
+              turnCount: 0,
             };
             
             // Send initial greeting
@@ -547,23 +615,50 @@ serve(async (req) => {
                     console.log('Transcript:', transcript);
                     
                     if (transcript) {
-                      // Query Dialogflow
-                      const response = await queryDialogflow(
+                      // Add user message to conversation history
+                      state.conversationHistory.push({
+                        role: 'user',
+                        text: transcript,
+                        timestamp: Date.now()
+                      });
+                      state.turnCount++;
+                      
+                      // Query Dialogflow with context
+                      const result = await queryDialogflow(
                         transcript,
                         state.sessionId,
                         state.agentId,
                         accessToken,
-                        state.projectId
+                        state.projectId,
+                        state.conversationHistory,
+                        state.customerName
                       );
                       
-                      console.log('Agent response:', response);
+                      // Update customer info if extracted
+                      if (result.extractedName && !state.customerName) {
+                        state.customerName = result.extractedName;
+                        console.log('📛 Customer identified:', state.customerName);
+                      }
+                      if (result.extractedPhone && !state.customerPhone) {
+                        state.customerPhone = result.extractedPhone;
+                        console.log('📞 Phone captured:', state.customerPhone);
+                      }
+                      
+                      // Add agent response to history
+                      state.conversationHistory.push({
+                        role: 'agent',
+                        text: result.response,
+                        timestamp: Date.now()
+                      });
+                      
+                      console.log('Agent response:', result.response);
                       
                       // Mark agent as speaking before sending audio
                       state.isAgentSpeaking = true;
                       state.vadHistory = []; // Reset VAD for barge-in detection
                       
                       // Synthesize and send response
-                      const responseAudio = await synthesizeSpeech(response, accessToken);
+                      const responseAudio = await synthesizeSpeech(result.response, accessToken);
                       sendAudioToTwilio(socket, state.streamSid, responseAudio);
                     }
                   } catch (err) {
