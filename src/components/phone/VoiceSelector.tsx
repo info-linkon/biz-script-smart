@@ -17,16 +17,8 @@ interface Voice {
   category?: string;
   labels?: Record<string, string>;
   description?: string;
+  is_recommended?: boolean;
 }
-
-// Voices that are recommended for Hebrew (tested for good pronunciation)
-const HEBREW_RECOMMENDED_VOICES = [
-  'JBFqnCBsd6RMkjVDRZzb', // George
-  'onwK4e9ZLuTAKqWW03F9', // Daniel
-  'TX3LPaxmHKxFdv7VOQHJ', // Liam
-  'pqHfZKP75CvOlQylNhV4', // Bill
-  'N2lVS1w4EtoT3dr4eOWO', // Callum
-];
 
 interface VoiceSelectorProps {
   selectedVoiceId: string | null;
@@ -82,7 +74,7 @@ export function VoiceSelector({ selectedVoiceId, onSelect, compact = false, curr
   const fetchVoices = async () => {
     setLoading(true);
     try {
-      const { data, error } = await supabase.functions.invoke('elevenlabs-get-voices', {
+      const { data, error } = await supabase.functions.invoke('google-get-voices', {
         body: { language }
       });
 
@@ -97,12 +89,12 @@ export function VoiceSelector({ selectedVoiceId, onSelect, compact = false, curr
       }
     } catch (error) {
       console.error('Error fetching voices:', error);
-      // Use some default voices as fallback
+      // Use Google TTS default voices as fallback
       setVoices([
-        { voice_id: '21m00Tcm4TlvDq8ikWAM', name: 'Rachel (Default)' },
-        { voice_id: 'EXAVITQu4vr4xnSDxMaL', name: 'Sarah' },
-        { voice_id: 'MF3mGyEYCl7XYWbV9V6O', name: 'Adam' },
-        { voice_id: 'XB0fDUnXU5powFXDhCwa', name: 'Charlotte' },
+        { voice_id: 'he-IL-Chirp3-HD-Aoede', name: 'Aoede (נקבה)', category: 'Chirp 3 HD', is_recommended: true },
+        { voice_id: 'he-IL-Chirp3-HD-Charon', name: 'Charon (זכר)', category: 'Chirp 3 HD', is_recommended: true },
+        { voice_id: 'he-IL-Wavenet-A', name: 'Wavenet A (נקבה)', category: 'Wavenet' },
+        { voice_id: 'he-IL-Wavenet-B', name: 'Wavenet B (זכר)', category: 'Wavenet' },
       ]);
     } finally {
       setLoading(false);
@@ -322,10 +314,10 @@ export function VoiceSelector({ selectedVoiceId, onSelect, compact = false, curr
                       >
                         {voice.name}
                       </Label>
-                      {language === 'he' && HEBREW_RECOMMENDED_VOICES.includes(voice.voice_id) && (
+                      {voice.is_recommended && (
                         <Badge variant="secondary" className="bg-accent text-accent-foreground text-xs gap-1">
                           <Star className="h-3 w-3 fill-current" />
-                          מומלץ לעברית
+                          מומלץ
                         </Badge>
                       )}
                     </div>
