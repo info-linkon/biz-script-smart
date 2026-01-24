@@ -13,7 +13,6 @@ import { VoiceSelector } from './VoiceSelector';
 interface PhoneNumber {
   id: string;
   elevenlabs_phone_id: string;
-  elevenlabs_agent_id?: string;
   phone_number: string;
   country_code: string;
   status: string;
@@ -68,17 +67,17 @@ export function PhoneNumberManager() {
   const fetchAvailableNumbers = async () => {
     setLoadingAvailable(true);
     try {
-      const { data, error } = await supabase.functions.invoke('elevenlabs-get-available-numbers', {
-        body: { country_code: selectedCountry }
-      });
-
-      if (error) throw error;
+      // Use Twilio through google-purchase-number to get available numbers
+      // For now, show sample numbers based on country
+      const sampleNumbers: AvailableNumber[] = selectedCountry === 'IL' 
+        ? [
+            { phone_number_id: 'sample_1', phone_number: '+972-50-XXX-XXXX', country_code: 'IL', monthly_cost: 6 },
+          ]
+        : [
+            { phone_number_id: 'sample_1', phone_number: '+1-XXX-XXX-XXXX', country_code: selectedCountry, monthly_cost: 1.15 },
+          ];
       
-      if (data.success) {
-        setAvailableNumbers(data.numbers || []);
-      } else {
-        throw new Error(data.error || 'Failed to fetch available numbers');
-      }
+      setAvailableNumbers(sampleNumbers);
     } catch (error) {
       console.error('Error fetching available numbers:', error);
       toast.error('שגיאה בטעינת מספרים זמינים');
@@ -93,9 +92,9 @@ export function PhoneNumberManager() {
     
     setPurchasing(true);
     try {
-      const { data, error } = await supabase.functions.invoke('elevenlabs-purchase-number', {
+      const { data, error } = await supabase.functions.invoke('google-purchase-number', {
         body: {
-          phone_number_id: selectedNumber.phone_number_id,
+          country_code: selectedCountry,
           voice_id: selectedVoiceId || undefined,
         }
       });
@@ -204,6 +203,16 @@ export function PhoneNumberManager() {
                 
                 {currentStep === 'number' ? (
                   <div className="space-y-4 py-4">
+                    {/* Google Dialogflow Info */}
+                    <div className="p-3 rounded-lg bg-gradient-to-br from-green-500/10 to-teal-500/10 border border-green-500/20">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xl">🎯</span>
+                        <span className="text-sm font-medium text-green-700 dark:text-green-400">
+                          Google Dialogflow CX
+                        </span>
+                      </div>
+                    </div>
+
                     <div className="space-y-2">
                       <label className="text-sm font-medium">בחר מדינה</label>
                       <Select value={selectedCountry} onValueChange={handleCountryChange}>

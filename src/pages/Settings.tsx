@@ -7,21 +7,17 @@ import { Label } from '@/components/ui/label';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
-import { User, Building2, Phone, MapPin, Loader2, Save, Volume2, Play, Pause, Languages, Zap, Globe, RefreshCw } from 'lucide-react';
+import { User, Building2, Phone, MapPin, Loader2, Save, Volume2, Play, Pause, Languages, RefreshCw } from 'lucide-react';
 import { PhoneNumberManager } from '@/components/phone/PhoneNumberManager';
 import { VoiceSelector } from '@/components/phone/VoiceSelector';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
-import { type VoiceProvider, getProviderInfo, setVoiceProvider } from '@/lib/voice-provider';
 
 interface Profile {
   business_name: string | null;
   business_type: string | null;
   phone: string | null;
   address: string | null;
-  elevenlabs_agent_id: string | null;
-  vapi_assistant_id: string | null;
   dialogflow_agent_id: string | null;
-  voice_provider: VoiceProvider | null;
 }
 
 export default function Settings() {
@@ -31,10 +27,7 @@ export default function Settings() {
     business_type: '',
     phone: '',
     address: '',
-    elevenlabs_agent_id: null,
-    vapi_assistant_id: null,
     dialogflow_agent_id: null,
-    voice_provider: 'elevenlabs',
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -44,7 +37,6 @@ export default function Settings() {
   const [currentVoicePreviewUrl, setCurrentVoicePreviewUrl] = useState<string | null>(null);
   const [savingVoice, setSavingVoice] = useState(false);
   const [savingLanguage, setSavingLanguage] = useState(false);
-  const [savingProvider, setSavingProvider] = useState(false);
   const [playingPreview, setPlayingPreview] = useState(false);
   const [audioElement, setAudioElement] = useState<HTMLAudioElement | null>(null);
   const [syncingAgent, setSyncingAgent] = useState(false);
@@ -78,10 +70,7 @@ export default function Settings() {
           business_type: data.business_type || '',
           phone: data.phone || '',
           address: data.address || '',
-          elevenlabs_agent_id: data.elevenlabs_agent_id || null,
-          vapi_assistant_id: data.vapi_assistant_id || null,
           dialogflow_agent_id: (data as any).dialogflow_agent_id || null,
-          voice_provider: (data.voice_provider as VoiceProvider) || 'elevenlabs',
         });
       }
     } catch (error) {
@@ -110,16 +99,7 @@ export default function Settings() {
         // Set voice
         if (script.voice_id) {
           setSelectedVoiceId(script.voice_id);
-          
-          // Fetch voice name and preview URL from ElevenLabs
-          const { data } = await supabase.functions.invoke('elevenlabs-get-voices');
-          if (data?.success && data.voices) {
-            const voice = data.voices.find((v: any) => v.voice_id === script.voice_id);
-            if (voice) {
-              setCurrentVoiceName(voice.name);
-              setCurrentVoicePreviewUrl(voice.preview_url || null);
-            }
-          }
+          setCurrentVoiceName(script.voice_id);
         }
       }
     } catch (error) {
@@ -192,7 +172,7 @@ export default function Settings() {
   };
 
   const handleLanguageChange = async (langCode: string) => {
-    if (!profile.elevenlabs_agent_id && !profile.vapi_assistant_id && !profile.dialogflow_agent_id) {
+    if (!profile.dialogflow_agent_id) {
       toast.error('יש לרכוש מספר טלפון קודם כדי לשנות שפה');
       return;
     }
@@ -225,15 +205,8 @@ export default function Settings() {
         .update({ language: langCode })
         .eq('id', scriptId);
 
-      // Update the agent based on the current provider
-      const updateFunctionMap: Record<VoiceProvider, string> = {
-        elevenlabs: 'elevenlabs-update-agent',
-        vapi: 'vapi-update-assistant',
-        google: 'google-update-agent',
-      };
-      const updateFunction = updateFunctionMap[profile.voice_provider || 'elevenlabs'];
-
-      const { data, error } = await supabase.functions.invoke(updateFunction, {
+      // Update the Google agent
+      const { data, error } = await supabase.functions.invoke('google-update-agent', {
         body: { 
           script_id: scriptId,
           language: langCode 
@@ -263,7 +236,7 @@ export default function Settings() {
   const handleVoiceChange = async (voiceId: string, voiceName?: string) => {
     setSelectedVoiceId(voiceId);
     
-    if (!profile.elevenlabs_agent_id && !profile.vapi_assistant_id && !profile.dialogflow_agent_id) {
+    if (!profile.dialogflow_agent_id) {
       toast.error('יש לרכוש מספר טלפון קודם כדי לשנות קול');
       return;
     }
@@ -293,15 +266,8 @@ export default function Settings() {
         .update({ voice_id: voiceId })
         .eq('id', scriptId);
 
-      // Call update agent based on current provider
-      const updateFunctionMap: Record<VoiceProvider, string> = {
-        elevenlabs: 'elevenlabs-update-agent',
-        vapi: 'vapi-update-assistant',
-        google: 'google-update-agent',
-      };
-      const updateFunction = updateFunctionMap[profile.voice_provider || 'elevenlabs'];
-
-      const { data, error } = await supabase.functions.invoke(updateFunction, {
+      // Call update agent for Google
+      const { data, error } = await supabase.functions.invoke('google-update-agent', {
         body: { 
           script_id: scriptId,
           voice_id: voiceId 
@@ -311,19 +277,8 @@ export default function Settings() {
       if (error) throw error;
 
       if (data?.success) {
-        // Update the displayed voice name
         if (voiceName) {
           setCurrentVoiceName(voiceName);
-        } else {
-          // Fetch voice name if not provided
-          const { data: voicesData } = await supabase.functions.invoke('elevenlabs-get-voices');
-          if (voicesData?.success && voicesData.voices) {
-            const voice = voicesData.voices.find((v: any) => v.voice_id === voiceId);
-            if (voice) {
-              setCurrentVoiceName(voice.name);
-              setCurrentVoicePreviewUrl(voice.preview_url || null);
-            }
-          }
         }
         toast.success('קול הסוכן עודכן בהצלחה');
       } else {
@@ -338,7 +293,7 @@ export default function Settings() {
   };
 
   const handleSyncAgent = async () => {
-    if (!profile.vapi_assistant_id && !profile.elevenlabs_agent_id && !profile.dialogflow_agent_id) {
+    if (!profile.dialogflow_agent_id) {
       toast.error('אין סוכן לסנכרון. יש להשלים את תהליך ה-Onboarding קודם.');
       return;
     }
@@ -364,15 +319,7 @@ export default function Settings() {
         return;
       }
 
-      // Determine which function to call based on provider
-      const updateFunctionMap: Record<VoiceProvider, string> = {
-        elevenlabs: 'elevenlabs-update-agent',
-        vapi: 'vapi-update-assistant',
-        google: 'google-update-agent',
-      };
-      const updateFunction = updateFunctionMap[profile.voice_provider || 'elevenlabs'];
-
-      const { data, error } = await supabase.functions.invoke(updateFunction, {
+      const { data, error } = await supabase.functions.invoke('google-update-agent', {
         body: { 
           script_id: script.id,
           voice_id: script.voice_id,
@@ -497,173 +444,38 @@ export default function Settings() {
         {/* Phone Number Management */}
         <PhoneNumberManager />
 
-        {/* Voice Provider Selection */}
-        {(profile.elevenlabs_agent_id || profile.vapi_assistant_id || profile.dialogflow_agent_id) && (
+        {/* Voice Provider Status */}
+        {profile.dialogflow_agent_id && (
           <Card className="border-0 shadow-sm">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <Zap className="h-5 w-5 text-primary" />
+                <span className="text-xl">🎯</span>
                 ספק Voice AI
               </CardTitle>
               <CardDescription>
-                בחר את הספק שישמש לשיחות הסוכן שלך
+                הסוכן שלך משתמש ב-Google Dialogflow CX
               </CardDescription>
             </CardHeader>
             <CardContent>
-              {savingProvider && (
-                <div className="flex items-center gap-2 mb-4 text-sm text-muted-foreground">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  מעדכן את הספק...
-                </div>
-              )}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                {/* ElevenLabs Option */}
-                <div
-                  className={`relative p-4 rounded-xl border-2 cursor-pointer transition-all ${
-                    profile.voice_provider === 'elevenlabs'
-                      ? 'border-primary bg-primary/5 shadow-md'
-                      : 'border-border hover:border-primary/50 hover:bg-muted/30'
-                  } ${savingProvider ? 'opacity-50 pointer-events-none' : ''}`}
-                  onClick={async () => {
-                    if (savingProvider || profile.voice_provider === 'elevenlabs') return;
-                    setSavingProvider(true);
-                    const success = await setVoiceProvider(user!.id, 'elevenlabs');
-                    if (success) {
-                      setProfile({ ...profile, voice_provider: 'elevenlabs' });
-                      toast.success('הספק עודכן ל-ElevenLabs');
-                    } else {
-                      toast.error('שגיאה בעדכון הספק');
-                    }
-                    setSavingProvider(false);
-                  }}
-                >
-                  {profile.voice_provider === 'elevenlabs' && (
-                    <div className="absolute top-2 left-2 w-3 h-3 rounded-full bg-primary" />
-                  )}
-                  <div className="flex items-start gap-3">
-                    <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-amber-400 to-orange-500 flex items-center justify-center text-xl">
-                      ⚡
-                    </div>
-                    <div className="flex-1">
-                      <h4 className="font-semibold">ElevenLabs</h4>
-                      <p className="text-sm text-muted-foreground mt-1">
-                        מהיר ואיכותי
-                      </p>
-                      <div className="flex flex-wrap gap-1 mt-2">
-                        <span className="text-xs px-2 py-0.5 rounded-full bg-accent text-accent-foreground">מהיר</span>
-                        <span className="text-xs px-2 py-0.5 rounded-full bg-muted text-muted-foreground">אנגלית</span>
-                      </div>
-                    </div>
+              <div className="p-4 rounded-xl bg-gradient-to-br from-green-500/10 to-teal-500/10 border border-green-500/20">
+                <div className="flex items-start gap-3">
+                  <div className="w-12 h-12 rounded-lg bg-gradient-to-br from-green-500 to-teal-600 flex items-center justify-center text-2xl flex-shrink-0">
+                    🎯
                   </div>
-                </div>
-
-                {/* Vapi Option */}
-                <div
-                  className={`relative p-4 rounded-xl border-2 cursor-pointer transition-all ${
-                    profile.voice_provider === 'vapi'
-                      ? 'border-primary bg-primary/5 shadow-md'
-                      : 'border-border hover:border-primary/50 hover:bg-muted/30'
-                  } ${savingProvider ? 'opacity-50 pointer-events-none' : ''}`}
-                  onClick={async () => {
-                    if (savingProvider || profile.voice_provider === 'vapi') return;
-                    setSavingProvider(true);
-                    const success = await setVoiceProvider(user!.id, 'vapi');
-                    if (success) {
-                      setProfile({ ...profile, voice_provider: 'vapi' });
-                      toast.success('הספק עודכן ל-Vapi.ai');
-                    } else {
-                      toast.error('שגיאה בעדכון הספק');
-                    }
-                    setSavingProvider(false);
-                  }}
-                >
-                  {profile.voice_provider === 'vapi' && (
-                    <div className="absolute top-2 left-2 w-3 h-3 rounded-full bg-primary" />
-                  )}
-                  <div className="flex items-start gap-3">
-                    <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-xl">
-                      🌍
-                    </div>
-                    <div className="flex-1">
-                      <h4 className="font-semibold">Vapi.ai</h4>
-                      <p className="text-sm text-muted-foreground mt-1">
-                        עברית + ערבית
-                      </p>
-                      <div className="flex flex-wrap gap-1 mt-2">
-                        <span className="text-xs px-2 py-0.5 rounded-full bg-accent text-accent-foreground">עברית</span>
-                        <span className="text-xs px-2 py-0.5 rounded-full bg-muted text-muted-foreground">ערבית</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Google Dialogflow CX Option */}
-                <div
-                  className={`relative p-4 rounded-xl border-2 cursor-pointer transition-all ${
-                    profile.voice_provider === 'google'
-                      ? 'border-primary bg-primary/5 shadow-md'
-                      : 'border-border hover:border-primary/50 hover:bg-muted/30'
-                  } ${savingProvider ? 'opacity-50 pointer-events-none' : ''}`}
-                  onClick={async () => {
-                    if (savingProvider || profile.voice_provider === 'google') return;
-                    
-                    // Check if user has a Dialogflow agent
-                    if (!profile.dialogflow_agent_id) {
-                      // Create one if not exists
-                      setSavingProvider(true);
-                      toast.info('יוצר Dialogflow Agent...');
-                      
-                      const { data, error } = await supabase.functions.invoke('google-create-agent');
-                      
-                      if (error || !data?.success) {
-                        toast.error('שגיאה ביצירת Agent. ודא שה-Google Cloud מוגדר נכון.');
-                        setSavingProvider(false);
-                        return;
-                      }
-                      
-                      setProfile({ ...profile, dialogflow_agent_id: data.agent_id });
-                    }
-                    
-                    setSavingProvider(true);
-                    const success = await setVoiceProvider(user!.id, 'google');
-                    if (success) {
-                      setProfile({ ...profile, voice_provider: 'google' });
-                      toast.success('הספק עודכן ל-Google Dialogflow CX');
-                    } else {
-                      toast.error('שגיאה בעדכון הספק');
-                    }
-                    setSavingProvider(false);
-                  }}
-                >
-                  {profile.voice_provider === 'google' && (
-                    <div className="absolute top-2 left-2 w-3 h-3 rounded-full bg-primary" />
-                  )}
-                  <div className="flex items-start gap-3">
-                    <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-green-500 to-teal-600 flex items-center justify-center text-xl">
-                      🎯
-                    </div>
-                    <div className="flex-1">
-                      <h4 className="font-semibold">Google Dialogflow</h4>
-                      <p className="text-sm text-muted-foreground mt-1">
-                        Chirp 3 STT
-                      </p>
-                      <div className="flex flex-wrap gap-1 mt-2">
-                        <span className="text-xs px-2 py-0.5 rounded-full bg-accent text-accent-foreground">עברית מצוינת</span>
-                        <span className="text-xs px-2 py-0.5 rounded-full bg-muted text-muted-foreground">עלות נמוכה</span>
-                      </div>
-                    </div>
+                  <div>
+                    <h4 className="font-semibold text-green-700 dark:text-green-400">Google Dialogflow CX</h4>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      זיהוי עברית מצוין עם Chirp 3 • עלות נמוכה • אמינות גבוהה • תמיכה בערבית
+                    </p>
                   </div>
                 </div>
               </div>
-              <p className="mt-4 text-sm text-muted-foreground">
-                💡 <strong>טיפ:</strong> Google Dialogflow CX מומלץ לזיהוי עברית מדויק עם Chirp 3
-              </p>
             </CardContent>
           </Card>
         )}
 
         {/* Language & Voice Settings */}
-        {(profile.elevenlabs_agent_id || profile.vapi_assistant_id || profile.dialogflow_agent_id) && (
+        {profile.dialogflow_agent_id && (
           <>
             <Card className="border-0 shadow-sm">
               <CardHeader>

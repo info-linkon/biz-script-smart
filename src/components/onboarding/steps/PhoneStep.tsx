@@ -1,12 +1,11 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Phone, ArrowRight, Loader2, Check, Sparkles, ShoppingCart, Mic, Radio } from 'lucide-react';
+import { Phone, ArrowRight, Loader2, Check, Sparkles, ShoppingCart } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { Label } from '@/components/ui/label';
-import { useAuth } from '@/contexts/AuthContext';
 
 interface PhoneStepProps {
   onComplete: () => void;
@@ -21,23 +20,6 @@ const COUNTRIES = [
   { code: 'FR', name: 'צרפת', prefix: '+33', price: '$1.50/חודש' },
 ];
 
-const VOICE_PROVIDERS = [
-  { 
-    id: 'elevenlabs', 
-    name: 'ElevenLabs', 
-    description: 'איכות קול מעולה, תמיכה מלאה בעברית',
-    features: ['קול טבעי ואיכותי', 'זיהוי שפה אוטומטי', 'WebSocket בזמן אמת'],
-    recommended: true,
-  },
-  { 
-    id: 'vapi', 
-    name: 'Vapi.ai', 
-    description: 'פלטפורמה מתקדמת עם Deepgram STT',
-    features: ['Deepgram Nova-2 STT', 'GPT-4 LLM', 'זמן תגובה נמוך'],
-    recommended: false,
-  },
-];
-
 const SETUP_STEPS = [
   { id: 'search', label: 'מחפש מספרים זמינים...' },
   { id: 'purchase', label: 'רוכש מספר...' },
@@ -46,46 +28,13 @@ const SETUP_STEPS = [
 ];
 
 export function PhoneStep({ onComplete, onBack }: PhoneStepProps) {
-  const { user } = useAuth();
   const [purchasing, setPurchasing] = useState(false);
   const [countryCode, setCountryCode] = useState('US');
-  const [voiceProvider, setVoiceProvider] = useState<'elevenlabs' | 'vapi'>('elevenlabs');
-  const [providerLoaded, setProviderLoaded] = useState(false);
   const [currentStep, setCurrentStep] = useState(0);
   const [purchaseComplete, setPurchaseComplete] = useState(false);
   const [purchasedNumber, setPurchasedNumber] = useState('');
   const [skipMode, setSkipMode] = useState(false);
   const [skipping, setSkipping] = useState(false);
-
-  // Load voice provider from user profile (selected in ProfileStep)
-  useEffect(() => {
-    const fetchVoiceProvider = async () => {
-      if (!user) return;
-      
-      try {
-        const { data: profile, error } = await supabase
-          .from('profiles')
-          .select('voice_provider')
-          .eq('user_id', user.id)
-          .single();
-        
-        if (error) {
-          console.error('Error fetching profile:', error);
-          return;
-        }
-        
-        if (profile?.voice_provider) {
-          setVoiceProvider(profile.voice_provider as 'elevenlabs' | 'vapi');
-        }
-      } catch (err) {
-        console.error('Error loading voice provider:', err);
-      } finally {
-        setProviderLoaded(true);
-      }
-    };
-    
-    fetchVoiceProvider();
-  }, [user]);
 
   const handlePurchase = async () => {
     setPurchasing(true);
@@ -97,10 +46,9 @@ export function PhoneStep({ onComplete, onBack }: PhoneStepProps) {
         setCurrentStep(prev => Math.min(prev + 1, SETUP_STEPS.length - 1));
       }, 1500);
 
-      const { data, error } = await supabase.functions.invoke('twilio-complete-setup', {
+      const { data, error } = await supabase.functions.invoke('google-purchase-number', {
         body: { 
           country_code: countryCode,
-          voice_provider: voiceProvider,
         },
       });
 
@@ -130,10 +78,7 @@ export function PhoneStep({ onComplete, onBack }: PhoneStepProps) {
   const handleSkip = async () => {
     setSkipping(true);
     try {
-      // Create agent based on selected provider
-      const functionName = voiceProvider === 'vapi' ? 'vapi-create-assistant' : 'elevenlabs-create-agent';
-      
-      const { data, error } = await supabase.functions.invoke(functionName, {
+      const { data, error } = await supabase.functions.invoke('google-create-agent', {
         body: {},
       });
 
@@ -154,7 +99,6 @@ export function PhoneStep({ onComplete, onBack }: PhoneStepProps) {
   };
 
   if (purchaseComplete) {
-    const providerName = voiceProvider === 'vapi' ? 'Vapi.ai' : 'ElevenLabs';
     return (
       <Card className="border-0 shadow-lg">
         <CardContent className="py-12 text-center">
@@ -166,7 +110,7 @@ export function PhoneStep({ onComplete, onBack }: PhoneStepProps) {
             המספר {purchasedNumber} מחובר לסוכן שלך
           </p>
           <p className="text-sm text-muted-foreground mb-4">
-            ספק: {providerName}
+            ספק: Google Dialogflow CX
           </p>
           <div className="flex items-center justify-center gap-2 text-primary">
             <Sparkles className="h-5 w-5" />
@@ -187,7 +131,7 @@ export function PhoneStep({ onComplete, onBack }: PhoneStepProps) {
             </div>
             <h2 className="text-xl font-bold mb-2">מגדיר את המספר שלך...</h2>
             <p className="text-sm text-muted-foreground">
-              יוצר סוכן {voiceProvider === 'vapi' ? 'Vapi.ai' : 'ElevenLabs'}
+              יוצר סוכן Google Dialogflow CX
             </p>
           </div>
 
@@ -240,66 +184,22 @@ export function PhoneStep({ onComplete, onBack }: PhoneStepProps) {
           </div>
           <CardTitle className="text-2xl">רכישת מספר טלפון</CardTitle>
           <CardDescription>
-            בחר ספק קול ומדינה למספר הטלפון שלך
+            בחר מדינה למספר הטלפון שלך
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
-          {/* Voice Provider Selection */}
-          <div className="space-y-3">
-            <Label className="text-sm font-medium">בחר ספק קול</Label>
-            <div className="grid gap-3">
-              {VOICE_PROVIDERS.map((provider) => (
-                <Card 
-                  key={provider.id}
-                  className={`cursor-pointer transition-all ${
-                    voiceProvider === provider.id 
-                      ? 'border-2 border-primary bg-primary/5' 
-                      : 'border border-border hover:border-primary/40'
-                  }`}
-                  onClick={() => setVoiceProvider(provider.id as 'elevenlabs' | 'vapi')}
-                >
-                  <CardContent className="p-4">
-                    <div className="flex items-start gap-3">
-                      <div className={`h-10 w-10 rounded-lg flex items-center justify-center ${
-                        voiceProvider === provider.id ? 'bg-primary/20' : 'bg-muted'
-                      }`}>
-                        {provider.id === 'elevenlabs' ? (
-                          <Mic className={`h-5 w-5 ${voiceProvider === provider.id ? 'text-primary' : 'text-muted-foreground'}`} />
-                        ) : (
-                          <Radio className={`h-5 w-5 ${voiceProvider === provider.id ? 'text-primary' : 'text-muted-foreground'}`} />
-                        )}
-                      </div>
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2">
-                          <h4 className="font-semibold">{provider.name}</h4>
-                          {provider.recommended && (
-                            <span className="text-xs bg-primary/10 text-primary px-2 py-0.5 rounded-full">
-                              מומלץ
-                            </span>
-                          )}
-                        </div>
-                        <p className="text-sm text-muted-foreground">{provider.description}</p>
-                        <div className="flex flex-wrap gap-1 mt-2">
-                          {provider.features.map((feature, i) => (
-                            <span key={i} className="text-xs bg-muted px-2 py-0.5 rounded">
-                              {feature}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                      <div className={`h-5 w-5 rounded-full border-2 flex items-center justify-center ${
-                        voiceProvider === provider.id 
-                          ? 'border-primary bg-primary' 
-                          : 'border-muted-foreground'
-                      }`}>
-                        {voiceProvider === provider.id && (
-                          <Check className="h-3 w-3 text-primary-foreground" />
-                        )}
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
+          {/* Google Dialogflow Info */}
+          <div className="p-4 rounded-xl bg-gradient-to-br from-green-500/10 to-teal-500/10 border border-green-500/20">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-green-500 to-teal-600 flex items-center justify-center text-xl flex-shrink-0">
+                🎯
+              </div>
+              <div>
+                <h4 className="font-semibold text-green-700 dark:text-green-400">Google Dialogflow CX</h4>
+                <p className="text-sm text-muted-foreground">
+                  זיהוי עברית מצוין עם Chirp 3 • עלות נמוכה • אמינות גבוהה
+                </p>
+              </div>
             </div>
           </div>
 
@@ -325,7 +225,7 @@ export function PhoneStep({ onComplete, onBack }: PhoneStepProps) {
 
           <div className="bg-muted/50 rounded-lg p-4 text-sm">
             <p className="text-muted-foreground">
-              המספר יהיה פעיל מיד לאחר הרכישה וישויך לסוכן {voiceProvider === 'vapi' ? 'Vapi.ai' : 'ElevenLabs'} שלך.
+              המספר יהיה פעיל מיד לאחר הרכישה וישויך לסוכן Google Dialogflow CX שלך.
               תוכל לקבל שיחות נכנסות ללא הגדרות נוספות.
             </p>
           </div>

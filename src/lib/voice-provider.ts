@@ -1,11 +1,9 @@
 import { supabase } from '@/integrations/supabase/client';
 
-export type VoiceProvider = 'elevenlabs' | 'vapi' | 'google';
+export type VoiceProvider = 'google';
 
 export interface VoiceProviderConfig {
   provider: VoiceProvider;
-  elevenlabs_agent_id?: string;
-  vapi_assistant_id?: string;
   dialogflow_agent_id?: string;
 }
 
@@ -15,19 +13,17 @@ export interface VoiceProviderConfig {
 export async function getVoiceProvider(userId: string): Promise<VoiceProviderConfig> {
   const { data: profile, error } = await supabase
     .from('profiles')
-    .select('voice_provider, elevenlabs_agent_id, vapi_assistant_id, dialogflow_agent_id')
+    .select('voice_provider, dialogflow_agent_id')
     .eq('user_id', userId)
     .single();
 
   if (error || !profile) {
     console.error('Error fetching voice provider:', error);
-    return { provider: 'elevenlabs' }; // Default to ElevenLabs
+    return { provider: 'google' };
   }
 
   return {
-    provider: (profile.voice_provider as VoiceProvider) || 'elevenlabs',
-    elevenlabs_agent_id: profile.elevenlabs_agent_id || undefined,
-    vapi_assistant_id: profile.vapi_assistant_id || undefined,
+    provider: 'google',
     dialogflow_agent_id: (profile as any).dialogflow_agent_id || undefined,
   };
 }
@@ -55,11 +51,6 @@ export async function setVoiceProvider(userId: string, provider: VoiceProvider):
 export async function getVoiceProviderCredentials(provider: VoiceProvider): Promise<{
   success: boolean;
   provider: VoiceProvider;
-  // ElevenLabs
-  signed_url?: string;
-  // Vapi
-  public_key?: string;
-  assistant_id?: string;
   // Google Dialogflow
   project_id?: string;
   access_token?: string;
@@ -67,56 +58,24 @@ export async function getVoiceProviderCredentials(provider: VoiceProvider): Prom
   agent_id?: string;
   error?: string;
 }> {
-  if (provider === 'google') {
-    const { data, error } = await supabase.functions.invoke('google-get-credentials');
-    
-    if (error || !data) {
-      console.error('Error getting Google credentials:', error);
-      return { success: false, provider, error: error?.message || 'Failed to get Google credentials' };
-    }
-
-    return {
-      success: true,
-      provider: 'google',
-      project_id: data.project_id,
-      agent_id: data.agent_id,
-      access_token: data.access_token,
-    };
-  } else if (provider === 'vapi') {
-    const { data, error } = await supabase.functions.invoke('vapi-get-token');
-    
-    if (error || !data) {
-      console.error('Error getting Vapi credentials:', error);
-      return { success: false, provider, error: error?.message || 'Failed to get Vapi credentials' };
-    }
-
-    return {
-      success: true,
-      provider: 'vapi',
-      public_key: data.public_key,
-      assistant_id: data.assistant_id,
-      agent_id: data.assistant_id,
-    };
-  } else {
-    // ElevenLabs
-    const { data, error } = await supabase.functions.invoke('elevenlabs-conversation-token');
-    
-    if (error || !data) {
-      console.error('Error getting ElevenLabs credentials:', error);
-      return { success: false, provider, error: error?.message || 'Failed to get ElevenLabs credentials' };
-    }
-
-    return {
-      success: true,
-      provider: 'elevenlabs',
-      signed_url: data.signed_url,
-      agent_id: data.agent_id,
-    };
+  const { data, error } = await supabase.functions.invoke('google-get-credentials');
+  
+  if (error || !data) {
+    console.error('Error getting Google credentials:', error);
+    return { success: false, provider, error: error?.message || 'Failed to get Google credentials' };
   }
+
+  return {
+    success: true,
+    provider: 'google',
+    project_id: data.project_id,
+    agent_id: data.agent_id,
+    access_token: data.access_token,
+  };
 }
 
 /**
- * Create or update an agent for the specified provider
+ * Create or update an agent for Google Dialogflow
  */
 export async function createOrUpdateAgent(
   provider: VoiceProvider,
@@ -130,38 +89,28 @@ export async function createOrUpdateAgent(
 ): Promise<{
   success: boolean;
   agent_id?: string;
-  assistant_id?: string;
   error?: string;
 }> {
-  const functionMap: Record<VoiceProvider, string> = {
-    elevenlabs: 'elevenlabs-create-agent',
-    vapi: 'vapi-create-assistant',
-    google: 'google-create-agent',
-  };
-  
-  const functionName = functionMap[provider];
-  
-  const { data, error } = await supabase.functions.invoke(functionName, {
+  const { data, error } = await supabase.functions.invoke('google-create-agent', {
     body: options || {}
   });
 
   if (error || !data?.success) {
-    console.error(`Error creating ${provider} agent:`, error || data?.error);
+    console.error('Error creating Google agent:', error || data?.error);
     return { 
       success: false, 
-      error: error?.message || data?.error || `Failed to create ${provider} agent` 
+      error: error?.message || data?.error || 'Failed to create Google agent' 
     };
   }
 
   return {
     success: true,
     agent_id: data.agent_id,
-    assistant_id: data.assistant_id,
   };
 }
 
 /**
- * Update an existing agent for the specified provider
+ * Update an existing agent for Google Dialogflow
  */
 export async function updateAgent(
   provider: VoiceProvider,
@@ -173,15 +122,7 @@ export async function updateAgent(
   success: boolean;
   error?: string;
 }> {
-  const functionMap: Record<VoiceProvider, string> = {
-    elevenlabs: 'elevenlabs-update-agent',
-    vapi: 'vapi-update-assistant',
-    google: 'google-update-agent',
-  };
-  
-  const functionName = functionMap[provider];
-  
-  const { data, error } = await supabase.functions.invoke(functionName, {
+  const { data, error } = await supabase.functions.invoke('google-update-agent', {
     body: {
       script_id: scriptId,
       ...options
@@ -189,10 +130,10 @@ export async function updateAgent(
   });
 
   if (error || !data?.success) {
-    console.error(`Error updating ${provider} agent:`, error || data?.error);
+    console.error('Error updating Google agent:', error || data?.error);
     return { 
       success: false, 
-      error: error?.message || data?.error || `Failed to update ${provider} agent` 
+      error: error?.message || data?.error || 'Failed to update Google agent' 
     };
   }
 
@@ -210,35 +151,13 @@ export function getProviderInfo(provider: VoiceProvider): {
   pros: string[];
   cons: string[];
 } {
-  if (provider === 'google') {
-    return {
-      name: 'Google Dialogflow CX',
-      nameEn: 'Google Dialogflow CX',
-      description: 'זיהוי דיבור מעולה בעברית עם Chirp 3',
-      icon: '🎯',
-      pros: ['זיהוי עברית מצוין (Chirp 3)', 'עלות נמוכה', 'אמינות גבוהה', 'תמיכה בערבית'],
-      cons: ['הגדרה מורכבת יותר', 'פחות קולות זמינים'],
-    };
-  }
-  
-  if (provider === 'vapi') {
-    return {
-      name: 'Vapi.ai',
-      nameEn: 'Vapi.ai',
-      description: 'תמיכה מלאה בעברית עם Deepgram STT + ElevenLabs TTS',
-      icon: '🌍',
-      pros: ['תמיכה מלאה בעברית', 'זיהוי דיבור מעולה', 'איכות קול גבוהה'],
-      cons: ['זמן תגובה מעט ארוך יותר', 'עלות גבוהה יותר'],
-    };
-  }
-
   return {
-    name: 'ElevenLabs',
-    nameEn: 'ElevenLabs',
-    description: 'מהיר ואיכותי, מתאים לאנגלית',
-    icon: '⚡',
-    pros: ['מהיר מאוד', 'עלות נמוכה יותר', 'קול טבעי'],
-    cons: ['תמיכה מוגבלת בעברית'],
+    name: 'Google Dialogflow CX',
+    nameEn: 'Google Dialogflow CX',
+    description: 'זיהוי דיבור מעולה בעברית עם Chirp 3',
+    icon: '🎯',
+    pros: ['זיהוי עברית מצוין (Chirp 3)', 'עלות נמוכה', 'אמינות גבוהה', 'תמיכה בערבית'],
+    cons: ['הגדרה מורכבת יותר', 'פחות קולות זמינים'],
   };
 }
 
@@ -246,11 +165,10 @@ export function getProviderInfo(provider: VoiceProvider): {
  * Get all available providers with their info
  */
 export function getAllProviders(): Array<{ provider: VoiceProvider; info: ReturnType<typeof getProviderInfo> }> {
-  const providers: VoiceProvider[] = ['elevenlabs', 'vapi', 'google'];
-  return providers.map(p => ({
-    provider: p,
-    info: getProviderInfo(p)
-  }));
+  return [{
+    provider: 'google',
+    info: getProviderInfo('google')
+  }];
 }
 
 /**
@@ -258,14 +176,5 @@ export function getAllProviders(): Array<{ provider: VoiceProvider; info: Return
  */
 export async function hasAgent(userId: string, provider: VoiceProvider): Promise<boolean> {
   const config = await getVoiceProvider(userId);
-  
-  switch (provider) {
-    case 'google':
-      return !!config.dialogflow_agent_id;
-    case 'vapi':
-      return !!config.vapi_assistant_id;
-    case 'elevenlabs':
-    default:
-      return !!config.elevenlabs_agent_id;
-  }
+  return !!config.dialogflow_agent_id;
 }
