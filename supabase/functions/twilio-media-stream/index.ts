@@ -658,60 +658,57 @@ function cleanAIResponse(response: string): string {
 }
 
 // Get voice configuration based on detected language
-// UPDATED: Using Neural2 for Hebrew (better pronunciation of Hebrew words like בכיף, בוקר)
-// Chirp3-HD for English/Arabic (more natural but weaker Hebrew pronunciation)
+// Using Wavenet voices - proven to work reliably
 function getVoiceForLanguage(
   detectedLanguage: string, 
   voiceGender: 'FEMALE' | 'MALE',
   sttConfidence: number = 1.0
 ): { languageCode: string; name: string } {
   
-  // Neural2 voices for Hebrew - better pronunciation of Hebrew words
-  const hebrewVoices = {
-    FEMALE: 'he-IL-Neural2-A',   // Best Hebrew pronunciation
-    MALE: 'he-IL-Neural2-D'      // Best Hebrew pronunciation
-  };
-  
-  // Chirp 3 HD for English/Arabic - more natural sounding
-  const otherVoices = {
+  // Wavenet voices - high quality and proven to work
+  const voices = {
+    hebrew: {
+      FEMALE: 'he-IL-Wavenet-A',   // Hebrew female
+      MALE: 'he-IL-Wavenet-D'      // Hebrew male
+    },
     arabic: {
-      FEMALE: 'ar-XA-Neural2-A',
-      MALE: 'ar-XA-Neural2-D'
+      FEMALE: 'ar-XA-Wavenet-A',
+      MALE: 'ar-XA-Wavenet-B'
     },
     english: {
-      FEMALE: 'en-US-Journey-F',   // Journey is Google's best English
-      MALE: 'en-US-Journey-D'
+      FEMALE: 'en-US-Wavenet-F',
+      MALE: 'en-US-Wavenet-D'
     }
   };
   
   // If low confidence - always use Hebrew voice
   if (sttConfidence < 0.5 || !detectedLanguage) {
-    console.log('🎤 Low confidence or no language, using Hebrew Neural2 voice');
+    console.log('🎤 Low confidence or no language, using Hebrew Wavenet voice');
     return { 
       languageCode: 'he-IL', 
-      name: hebrewVoices[voiceGender]
+      name: voices.hebrew[voiceGender]
     };
   }
   
   const lang = detectedLanguage.toLowerCase();
   
   if (lang.startsWith('en')) {
-    console.log('🎤 Using English Journey voice');
+    console.log('🎤 Using English Wavenet voice');
     return { 
       languageCode: 'en-US', 
-      name: otherVoices.english[voiceGender]
+      name: voices.english[voiceGender]
     };
   } else if (lang.startsWith('ar')) {
-    console.log('🎤 Using Arabic Neural2 voice');
+    console.log('🎤 Using Arabic Wavenet voice');
     return { 
       languageCode: 'ar-XA', 
-      name: otherVoices.arabic[voiceGender]
+      name: voices.arabic[voiceGender]
     };
   } else {
-    console.log('🎤 Using Hebrew Neural2 voice');
+    console.log('🎤 Using Hebrew Wavenet voice');
     return { 
       languageCode: 'he-IL', 
-      name: hebrewVoices[voiceGender]
+      name: voices.hebrew[voiceGender]
     };
   }
 }
