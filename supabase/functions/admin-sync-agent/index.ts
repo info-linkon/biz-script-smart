@@ -118,6 +118,42 @@ function getExpandedIntents(language: string) {
       ]
     },
     {
+      displayName: "what_do_you_do",
+      trainingPhrases: language === 'he' ? [
+        { parts: [{ text: "מה אתם עושים" }], repeatCount: 1 },
+        { parts: [{ text: "ספר לי על החברה" }], repeatCount: 1 },
+        { parts: [{ text: "מה השירותים שלכם" }], repeatCount: 1 },
+        { parts: [{ text: "במה אתם מתמחים" }], repeatCount: 1 },
+        { parts: [{ text: "מה אתם מציעים" }], repeatCount: 1 },
+        { parts: [{ text: "על מה החברה" }], repeatCount: 1 },
+        { parts: [{ text: "תספר לי על העסק" }], repeatCount: 1 },
+        { parts: [{ text: "מי אתם" }], repeatCount: 1 }
+      ] : [
+        { parts: [{ text: "What do you do" }], repeatCount: 1 },
+        { parts: [{ text: "Tell me about your company" }], repeatCount: 1 },
+        { parts: [{ text: "What services do you offer" }], repeatCount: 1 },
+        { parts: [{ text: "What is your business about" }], repeatCount: 1 }
+      ]
+    },
+    {
+      displayName: "pricing_question",
+      trainingPhrases: language === 'he' ? [
+        { parts: [{ text: "כמה זה עולה" }], repeatCount: 1 },
+        { parts: [{ text: "מה המחירים" }], repeatCount: 1 },
+        { parts: [{ text: "כמה עולה לבנות אתר" }], repeatCount: 1 },
+        { parts: [{ text: "כמה עולה אפליקציה" }], repeatCount: 1 },
+        { parts: [{ text: "מה העלות" }], repeatCount: 1 },
+        { parts: [{ text: "תן לי הצעת מחיר" }], repeatCount: 1 },
+        { parts: [{ text: "כמה תגבו" }], repeatCount: 1 },
+        { parts: [{ text: "מה המחיר של" }], repeatCount: 1 }
+      ] : [
+        { parts: [{ text: "How much does it cost" }], repeatCount: 1 },
+        { parts: [{ text: "What are your prices" }], repeatCount: 1 },
+        { parts: [{ text: "How much for a website" }], repeatCount: 1 },
+        { parts: [{ text: "Give me a quote" }], repeatCount: 1 }
+      ]
+    },
+    {
       displayName: "schedule.appointment",
       trainingPhrases: language === 'he' ? [
         { parts: [{ text: "אני רוצה לקבוע פגישה" }], repeatCount: 1 },
@@ -146,19 +182,6 @@ function getExpandedIntents(language: string) {
       ]
     },
     {
-      displayName: "business.info",
-      trainingPhrases: language === 'he' ? [
-        { parts: [{ text: "מה השירותים שלכם" }], repeatCount: 1 },
-        { parts: [{ text: "ספר לי על העסק" }], repeatCount: 1 },
-        { parts: [{ text: "מה אתם מציעים" }], repeatCount: 1 },
-        { parts: [{ text: "איפה אתם נמצאים" }], repeatCount: 1 },
-        { parts: [{ text: "מה הכתובת שלכם" }], repeatCount: 1 }
-      ] : [
-        { parts: [{ text: "What services do you offer" }], repeatCount: 1 },
-        { parts: [{ text: "Tell me about your business" }], repeatCount: 1 }
-      ]
-    },
-    {
       displayName: "thanks",
       trainingPhrases: language === 'he' ? [
         { parts: [{ text: "תודה" }], repeatCount: 1 },
@@ -182,6 +205,66 @@ function getExpandedIntents(language: string) {
       ]
     }
   ];
+}
+
+function buildPlaybookInstructions(profile: any, script: any, language: string): string[] {
+  const businessName = profile?.business_name || 'העסק';
+  const businessType = profile?.business_type || 'עסק';
+  const services = script?.services || [];
+  const faq = script?.faq || [];
+  const businessHours = script?.business_hours || '';
+
+  // Build FAQ pricing info
+  const pricingFaq = faq.find((f: any) => 
+    f.question?.includes('מחיר') || 
+    f.question?.includes('עולה') || 
+    f.question?.includes('cost') ||
+    f.question?.includes('price')
+  );
+
+  if (language === 'he') {
+    const instructions = [
+      `אתה נציג של ${businessName}. לעולם אל תזדהה כ"עוזר AI" או "בוט" - אתה נציג אנושי של החברה.`,
+      `כאשר נשאל "מה אתם עושים?" או "ספר על החברה" - תאר את ${businessName}: אנחנו ${businessType}.${services.length > 0 ? ` השירותים שלנו כוללים: ${services.join(', ')}.` : ''}`,
+      pricingFaq 
+        ? `כאשר נשאל על מחירים - ענה: "${pricingFaq.answer}"`
+        : `כאשר נשאל על מחירים - אמור שנשמח לתת הצעת מחיר מותאמת אישית ולקבוע פגישת היכרות.`,
+      `אם הלקוח מציג את שמו (למשל "אני דני") - זכור את השם ופנה אליו בשם לאורך השיחה.`,
+      `תמיד הצע לקבוע פגישת היכרות ללא עלות כשמתאים.`,
+      businessHours ? `שעות הפעילות שלנו: ${businessHours}` : ``,
+      `דבר תמיד בעברית באותיות עבריות. היה קצר, ענייני וידידותי.`
+    ].filter(i => i.length > 0);
+
+    // Add FAQ instructions
+    for (const item of faq) {
+      if (!item.question?.includes('מחיר') && !item.question?.includes('עולה')) {
+        instructions.push(`אם נשאל "${item.question}" - ענה: "${item.answer}"`);
+      }
+    }
+
+    return instructions;
+  } else {
+    const instructions = [
+      `You are a representative of ${businessName}. Never identify as an "AI assistant" or "bot" - you represent the company.`,
+      `When asked "what do you do?" or "tell me about your company" - describe ${businessName}: We are ${businessType}.${services.length > 0 ? ` Our services include: ${services.join(', ')}.` : ''}`,
+      pricingFaq 
+        ? `When asked about pricing - answer: "${pricingFaq.answer}"`
+        : `When asked about pricing - offer to provide a custom quote and schedule a free consultation.`,
+      `If the customer introduces themselves (e.g. "I'm John") - remember their name and use it throughout the conversation.`,
+      `Always offer to schedule a free consultation meeting when appropriate.`,
+      businessHours ? `Our business hours: ${businessHours}` : ``,
+      `Be brief, professional and friendly.`
+    ].filter(i => i.length > 0);
+
+    // Add FAQ instructions
+    for (const item of faq) {
+      if (!item.question?.includes('cost') && !item.question?.includes('price')) {
+        instructions.push(`If asked "${item.question}" - answer: "${item.answer}"`);
+      }
+    }
+
+    return instructions;
+  }
 }
 
 function buildSystemPrompt(profile: any, script: any, language: string): string {
@@ -257,6 +340,49 @@ ${customPrompt ? `הנחיות מיוחדות:\n${customPrompt}` : ''}
 - היה קצר, ענייני ומקצועי`;
 }
 
+function getIntentResponses(profile: any, script: any, language: string): Record<string, string> {
+  const businessName = profile?.business_name || 'העסק';
+  const businessType = profile?.business_type || 'עסק';
+  const services = script?.services || [];
+  const faq = script?.faq || [];
+
+  // Find pricing FAQ
+  const pricingFaq = faq.find((f: any) => 
+    f.question?.includes('מחיר') || 
+    f.question?.includes('עולה') || 
+    f.question?.includes('cost') ||
+    f.question?.includes('price')
+  );
+
+  if (language === 'he') {
+    return {
+      'what_do_you_do': `אנחנו ${businessName}, ${businessType}.${services.length > 0 ? ` אנחנו מתמחים ב${services.slice(0, 3).join(', ')}. רוצה לשמוע פרטים על שירות ספציפי?` : ' איך אוכל לעזור לך?'}`,
+      'pricing_question': pricingFaq 
+        ? pricingFaq.answer 
+        : `המחיר תלוי בהיקף הפרויקט. נשמח לתת לך הצעת מחיר מותאמת אישית. רוצה לקבוע פגישת היכרות קצרה?`,
+      'greeting': script?.greeting_message || `שלום! כאן ${businessName}, איך אוכל לעזור לך?`,
+      'introduction': `נעים מאוד! במה אוכל לעזור לך היום?`,
+      'schedule.appointment': `בשמחה! בוא נקבע פגישה. לאיזה יום ושעה יהיה לך נוח?`,
+      'check.availability': `אשמח לבדוק. לאיזה יום אתה מחפש?`,
+      'thanks': `בכיף! יש עוד משהו שאוכל לעזור?`,
+      'goodbye': `תודה שפנית אלינו! יום נעים ונשמח לשמוע ממך.`
+    };
+  } else {
+    return {
+      'what_do_you_do': `We are ${businessName}, ${businessType}.${services.length > 0 ? ` We specialize in ${services.slice(0, 3).join(', ')}. Would you like details on a specific service?` : ' How can I help you?'}`,
+      'pricing_question': pricingFaq 
+        ? pricingFaq.answer 
+        : `Pricing depends on the project scope. We'd be happy to give you a custom quote. Would you like to schedule a brief consultation?`,
+      'greeting': script?.greeting_message || `Hello! This is ${businessName}, how can I help you?`,
+      'introduction': `Nice to meet you! How can I help you today?`,
+      'schedule.appointment': `Sure! Let's schedule a meeting. What day and time works for you?`,
+      'check.availability': `I'd be happy to check. What day are you looking for?`,
+      'thanks': `You're welcome! Is there anything else I can help with?`,
+      'goodbye': `Thank you for reaching out! Have a great day.`
+    };
+  }
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -318,12 +444,12 @@ serve(async (req) => {
 
     const accessToken = await getAccessToken(credentials);
     const language = script?.language || 'he';
-    const languageCode = language === 'he' ? 'he' : language === 'ar' ? 'ar' : 'en';
     const agentName = `projects/${projectId}/locations/global/agents/${profile.dialogflow_agent_id}`;
+    const businessName = profile?.business_name || 'Business';
 
-    console.log('Syncing agent for user:', user_id, 'agent:', profile.dialogflow_agent_id);
+    console.log('🔄 Syncing agent for user:', user_id, 'agent:', profile.dialogflow_agent_id);
 
-    // 0. First, add 'en' as a supported language to the agent (required for LLM)
+    // 0. Add 'en' as a supported language (required for LLM)
     const addEnglishResponse = await fetch(
       `https://dialogflow.googleapis.com/v3/${agentName}?updateMask=supportedLanguageCodes`,
       {
@@ -340,26 +466,109 @@ serve(async (req) => {
     );
 
     if (addEnglishResponse.ok) {
-      console.log('Added English as supported language');
-    } else {
-      const errText = await addEnglishResponse.text();
-      console.log('Note: Could not add English language (may already exist):', errText);
+      console.log('✅ Added English as supported language');
     }
 
-    // 1. Update generative settings with LLM
+    // 1. Create or Update Playbook
+    const playbookDisplayName = `${businessName} Sales Agent`;
+    const playbookGoal = language === 'he' 
+      ? `אתה נציג מכירות של ${businessName}. עזור ללקוחות עם שאלות על השירותים, המחירים וקביעת פגישות.`
+      : `You are a sales representative of ${businessName}. Help customers with questions about services, pricing, and scheduling meetings.`;
+    
+    const playbookInstructions = buildPlaybookInstructions(profile, script, language);
+
+    // List existing playbooks
+    const listPlaybooksResponse = await fetch(
+      `https://dialogflow.googleapis.com/v3/${agentName}/playbooks`,
+      {
+        headers: { 'Authorization': `Bearer ${accessToken}` }
+      }
+    );
+
+    let playbookName: string | null = null;
+    let existingPlaybooks: any[] = [];
+
+    if (listPlaybooksResponse.ok) {
+      const playbooksData = await listPlaybooksResponse.json();
+      existingPlaybooks = playbooksData.playbooks || [];
+      const existingPlaybook = existingPlaybooks.find((p: any) => p.displayName === playbookDisplayName);
+      if (existingPlaybook) {
+        playbookName = existingPlaybook.name;
+      }
+    }
+
+    const playbookPayload = {
+      displayName: playbookDisplayName,
+      goal: playbookGoal,
+      instruction: {
+        steps: playbookInstructions.map(instruction => ({ text: instruction }))
+      },
+      llmModelSettings: {
+        model: "", // Let Dialogflow use default
+        promptText: buildSystemPrompt(profile, script, language)
+      }
+    };
+
+    if (playbookName) {
+      // Update existing playbook
+      console.log('📝 Updating existing playbook:', playbookName);
+      const updatePlaybookResponse = await fetch(
+        `https://dialogflow.googleapis.com/v3/${playbookName}?updateMask=goal,instruction,llmModelSettings`,
+        {
+          method: 'PATCH',
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            name: playbookName,
+            ...playbookPayload
+          })
+        }
+      );
+
+      if (updatePlaybookResponse.ok) {
+        console.log('✅ Updated playbook successfully');
+      } else {
+        const errText = await updatePlaybookResponse.text();
+        console.error('❌ Failed to update playbook:', errText);
+      }
+    } else {
+      // Create new playbook
+      console.log('📝 Creating new playbook...');
+      const createPlaybookResponse = await fetch(
+        `https://dialogflow.googleapis.com/v3/${agentName}/playbooks`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(playbookPayload)
+        }
+      );
+
+      if (createPlaybookResponse.ok) {
+        const createdPlaybook = await createPlaybookResponse.json();
+        playbookName = createdPlaybook.name;
+        console.log('✅ Created playbook:', playbookName);
+      } else {
+        const errText = await createPlaybookResponse.text();
+        console.error('❌ Failed to create playbook:', errText);
+      }
+    }
+
+    // 2. Update generative settings with System Prompt
     const systemPrompt = buildSystemPrompt(profile, script, language);
-    const promptTemplateName = `${profile?.business_name || 'Business'} Agent`;
+    const promptTemplateName = `${businessName} Agent`;
     
-    console.log('📋 System Prompt (first 300 chars):', systemPrompt.substring(0, 300));
-    console.log('📋 Business name in prompt:', profile?.business_name);
-    console.log('📋 Prompt template name:', promptTemplateName);
+    console.log('📋 System Prompt (first 200 chars):', systemPrompt.substring(0, 200));
     
-    // CRITICAL: selectedPrompt must reference the displayName of a template in promptTemplates
     const generativeSettingsPayload = {
       name: `${agentName}/generativeSettings`,
       languageCode: 'en',
       fallbackSettings: {
-        selectedPrompt: promptTemplateName,  // Reference to template displayName, NOT the prompt text!
+        selectedPrompt: promptTemplateName,
         promptTemplates: [
           {
             displayName: promptTemplateName,
@@ -369,7 +578,7 @@ serve(async (req) => {
         ]
       },
       llmModelSettings: {
-        model: "",  // Empty string lets Dialogflow use default model
+        model: "",
         promptText: systemPrompt
       },
       knowledgeConnectorSettings: {
@@ -380,9 +589,7 @@ serve(async (req) => {
       }
     };
 
-    console.log('📤 Sending generative settings payload...');
-
-    const updateResponse = await fetch(
+    const updateGenerativeResponse = await fetch(
       `https://dialogflow.googleapis.com/v3/${agentName}/generativeSettings?updateMask=fallbackSettings,llmModelSettings,knowledgeConnectorSettings`,
       {
         method: 'PATCH',
@@ -394,17 +601,16 @@ serve(async (req) => {
       }
     );
 
-    if (!updateResponse.ok) {
-      const errorText = await updateResponse.text();
-      console.error('❌ Failed to update generative settings:', errorText);
+    if (updateGenerativeResponse.ok) {
+      console.log('✅ Updated generative settings');
     } else {
-      const updateResult = await updateResponse.json();
-      console.log('✅ Updated generative settings with LLM');
-      console.log('📝 Response (first 300 chars):', JSON.stringify(updateResult).substring(0, 300));
+      const errText = await updateGenerativeResponse.text();
+      console.error('❌ Failed to update generative settings:', errText);
     }
 
-    // 2. Enable Generative Fallback on Default Start Flow
+    // 3. Update Default Start Flow with enableGenerativeFallback AND route responses
     const defaultFlowPath = `${agentName}/flows/00000000-0000-0000-0000-000000000000`;
+    const intentResponses = getIntentResponses(profile, script, language);
     
     // Get current flow
     const flowResponse = await fetch(
@@ -417,6 +623,7 @@ serve(async (req) => {
     if (flowResponse.ok) {
       const flowData = await flowResponse.json();
       const eventHandlers = flowData.eventHandlers || [];
+      const transitionRoutes = flowData.transitionRoutes || [];
       
       // Update event handlers with enableGenerativeFallback
       const updatedEventHandlers = eventHandlers.map((handler: any) => {
@@ -425,7 +632,7 @@ serve(async (req) => {
             ...handler,
             triggerFulfillment: {
               ...handler.triggerFulfillment,
-              messages: [], // Remove static messages
+              messages: [],
               enableGenerativeFallback: true
             }
           };
@@ -433,7 +640,7 @@ serve(async (req) => {
         return handler;
       });
 
-      // Add handlers if they don't exist
+      // Ensure handlers exist
       const hasNoMatch = updatedEventHandlers.some((h: any) => h.event === 'sys.no-match-default');
       const hasNoInput = updatedEventHandlers.some((h: any) => h.event === 'sys.no-input-default');
 
@@ -457,7 +664,7 @@ serve(async (req) => {
         });
       }
 
-      // Update the flow
+      // Update the flow with event handlers
       const flowUpdateResponse = await fetch(
         `https://dialogflow.googleapis.com/v3/${defaultFlowPath}?updateMask=eventHandlers`,
         {
@@ -474,14 +681,14 @@ serve(async (req) => {
       );
 
       if (flowUpdateResponse.ok) {
-        console.log('Updated Flow with enableGenerativeFallback');
+        console.log('✅ Updated Flow with enableGenerativeFallback');
       } else {
         const flowError = await flowUpdateResponse.text();
-        console.error('Failed to update flow:', flowError);
+        console.error('❌ Failed to update flow:', flowError);
       }
     }
 
-    // 3. Update intents
+    // 4. Update/Create intents with custom responses
     const listIntentsResponse = await fetch(
       `https://dialogflow.googleapis.com/v3/${agentName}/intents`,
       {
@@ -550,7 +757,119 @@ serve(async (req) => {
       }
     }
 
-    // 4. Train the agent
+    // 5. Update transition routes with proper responses for key intents
+    console.log('📝 Updating transition routes with custom responses...');
+    
+    // Get fresh flow data
+    const freshFlowResponse = await fetch(
+      `https://dialogflow.googleapis.com/v3/${defaultFlowPath}`,
+      {
+        headers: { 'Authorization': `Bearer ${accessToken}` }
+      }
+    );
+
+    if (freshFlowResponse.ok) {
+      const flowData = await freshFlowResponse.json();
+      const currentRoutes = flowData.transitionRoutes || [];
+      
+      // Map intent names to their full paths
+      const intentPaths = new Map<string, string>();
+      for (const intent of existingIntents) {
+        const displayName = intent.displayName;
+        intentPaths.set(displayName, intent.name);
+      }
+      
+      // Re-fetch to get newly created intents
+      const refreshIntentsResponse = await fetch(
+        `https://dialogflow.googleapis.com/v3/${agentName}/intents`,
+        {
+          headers: { 'Authorization': `Bearer ${accessToken}` },
+        }
+      );
+      
+      if (refreshIntentsResponse.ok) {
+        const refreshedIntents = await refreshIntentsResponse.json();
+        for (const intent of (refreshedIntents.intents || [])) {
+          intentPaths.set(intent.displayName, intent.name);
+        }
+      }
+
+      // Build updated routes
+      const updatedRoutes = [];
+      const processedIntents = new Set<string>();
+
+      // First, keep existing routes but update their responses
+      for (const route of currentRoutes) {
+        if (route.intent) {
+          const intentName = route.intent.split('/').pop();
+          const displayName = Array.from(intentPaths.entries()).find(([_, path]) => path.endsWith(intentName))?.[0];
+          
+          if (displayName && intentResponses[displayName]) {
+            processedIntents.add(displayName);
+            updatedRoutes.push({
+              intent: route.intent,
+              triggerFulfillment: {
+                messages: [
+                  {
+                    text: {
+                      text: [intentResponses[displayName]]
+                    }
+                  }
+                ]
+              }
+            });
+          } else {
+            updatedRoutes.push(route);
+            if (displayName) processedIntents.add(displayName);
+          }
+        } else {
+          updatedRoutes.push(route);
+        }
+      }
+
+      // Add routes for new intents that don't have routes yet
+      for (const [displayName, response] of Object.entries(intentResponses)) {
+        if (!processedIntents.has(displayName) && intentPaths.has(displayName)) {
+          updatedRoutes.push({
+            intent: intentPaths.get(displayName),
+            triggerFulfillment: {
+              messages: [
+                {
+                  text: {
+                    text: [response]
+                  }
+                }
+              ]
+            }
+          });
+        }
+      }
+
+      // Update flow with new routes
+      const routesUpdateResponse = await fetch(
+        `https://dialogflow.googleapis.com/v3/${defaultFlowPath}?updateMask=transitionRoutes`,
+        {
+          method: 'PATCH',
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            name: defaultFlowPath,
+            transitionRoutes: updatedRoutes
+          })
+        }
+      );
+
+      if (routesUpdateResponse.ok) {
+        console.log('✅ Updated transition routes with custom responses');
+      } else {
+        const routesError = await routesUpdateResponse.text();
+        console.error('❌ Failed to update transition routes:', routesError);
+      }
+    }
+
+    // 6. Train the agent
     await fetch(
       `https://dialogflow.googleapis.com/v3/${agentName}/flows/00000000-0000-0000-0000-000000000000:train`,
       {
@@ -562,12 +881,13 @@ serve(async (req) => {
       }
     );
 
-    console.log('Agent sync complete, results:', results);
+    console.log('✅ Agent sync complete');
 
     return new Response(
       JSON.stringify({ 
         success: true,
         agent_id: profile.dialogflow_agent_id,
+        playbook: playbookName ? 'created/updated' : 'not_supported',
         results,
         message: `Synced ${results.filter(r => r.success).length}/${results.length} intents`
       }),
