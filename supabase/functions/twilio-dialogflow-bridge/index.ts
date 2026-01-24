@@ -93,10 +93,12 @@ serve(async (req) => {
         // The greeting will be sent via WebSocket, but we say a brief intro first
         const streamUrl = `wss://${supabaseUrl.replace('https://', '')}/functions/v1/twilio-media-stream`;
         
+        // Using bidirectional="true" to enable two-way audio streaming
+        // This allows us to send audio back to the caller through the same WebSocket
         twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Connect>
-    <Stream url="${streamUrl}" track="both_tracks">
+    <Stream url="${streamUrl}" bidirectional="true">
       <Parameter name="userId" value="${userId}" />
       <Parameter name="agentId" value="${profile?.dialogflow_agent_id || ''}" />
       <Parameter name="language" value="${language}" />
@@ -104,6 +106,8 @@ serve(async (req) => {
     </Stream>
   </Connect>
 </Response>`;
+        
+        console.log('📄 TwiML Response being sent:', twiml);
       } else {
         // Record-based mode - uses process-recording for Hebrew/Arabic recognition
         twiml = `<?xml version="1.0" encoding="UTF-8"?>
