@@ -162,9 +162,11 @@ serve(async (req) => {
     // Map language code for Dialogflow
     const languageCode = language === 'he' ? 'he' : language === 'ar' ? 'ar' : 'en';
 
-    // Update generative settings with new prompt and language code
+    // Update generative settings with new prompt, language code, AND LLM settings
+    // IMPORTANT: LLM settings must use 'en' language code even for Hebrew/Arabic
+    // The system prompt instructs the model to respond in the target language
     const generativeSettings = {
-      languageCode: languageCode,
+      languageCode: 'en', // LLM only supports 'en' - but system prompt tells it to respond in Hebrew/Arabic
       generativeSettings: {
         fallbackSettings: {
           selectedPrompt: systemPrompt,
@@ -175,12 +177,25 @@ serve(async (req) => {
               frozen: false
             }
           ]
+        },
+        // CRITICAL: Enable LLM for natural conversation
+        llmModelSettings: {
+          model: "gemini-1.5-flash",
+          promptText: systemPrompt
+        },
+        knowledgeConnectorSettings: {
+          enabled: true,
+          searchConfig: {
+            maxSnippetCount: 3
+          }
         }
       }
     };
 
+    console.log('🔄 Updating generative settings with LLM enabled (using en for LLM, prompting for', language, ')...');
+
     const updateResponse = await fetch(
-      `https://dialogflow.googleapis.com/v3/${agentName}/generativeSettings?updateMask=fallbackSettings`,
+      `https://dialogflow.googleapis.com/v3/${agentName}/generativeSettings?updateMask=fallbackSettings,llmModelSettings,knowledgeConnectorSettings`,
       {
         method: 'PATCH',
         headers: {
@@ -193,12 +208,118 @@ serve(async (req) => {
 
     if (!updateResponse.ok) {
       const errorText = await updateResponse.text();
-      console.error('Failed to update agent:', errorText);
-      return new Response(
-        JSON.stringify({ error: 'Failed to update agent', details: errorText }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      console.error('❌ Failed to update generative settings:', errorText);
+    } else {
+      console.log('✅ Generative settings updated with LLM');
     }
+
+    // Enable Generative Fallback on the Default Start Flow
+    const flowName = `${agentName}/flows/00000000-0000-0000-0000-000000000000`;
+    
+    // First, get the current flow to preserve existing routes
+    const flowResponse = await fetch(
+      `https://dialogflow.googleapis.com/v3/${flowName}`,
+      {
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+        }
+      }
+    );
+
+    if (flowResponse.ok) {
+      const flowData = await flowResponse.json();
+      console.log('📋 Current flow name:', flowData.name);
+      console.log('📋 Current event handlers:', JSON.stringify(flowData.eventHandlers || []));
+
+      // Create new event handlers with Generative Fallback enabled
+      // CRITICAL: Remove static messages and enable LLM response
+      const newEventHandlers = [
+        {
+          name: flowData.eventHandlers?.find((h: any) => h.event === 'sys.no-match-default')?.name || undefined,
+          event: 'sys.no-match-default',
+          triggerFulfillment: {
+            // NO static messages - let the LLM respond
+            messages: [],
+            // CRITICAL: Enable Generative Fallback
+            enableGenerativeFallback: true
+          }
+        },
+        {
+          name: flowData.eventHandlers?.find((h: any) => h.event === 'sys.no-input-default')?.name || undefined,
+          event: 'sys.no-input-default',
+          triggerFulfillment: {
+            messages: [
+              {
+                text: {
+                  text: [language === 'he' ? 
+                    "האם אתה עדיין שם? איך אוכל לעזור?" : 
+                    language === 'ar' ? 
+                    "هل ما زلت هناك؟" :
+                    "Are you still there?"]
+                }
+              }
+            ]
+          }
+        }
+      ];
+
+      console.log('🔧 Setting new event handlers with enableGenerativeFallback:', JSON.stringify(newEventHandlers));
+
+      // Update the flow with new event handlers
+      const flowUpdatePayload = {
+        name: flowName,
+        displayName: flowData.displayName || "Default Start Flow",
+        eventHandlers: newEventHandlers,
+        transitionRoutes: flowData.transitionRoutes || []
+      };
+
+      const flowUpdateResponse = await fetch(
+        `https://dialogflow.googleapis.com/v3/${flowName}?updateMask=eventHandlers`,
+        {
+          method: 'PATCH',
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(flowUpdatePayload)
+        }
+      );
+
+      if (flowUpdateResponse.ok) {
+        const updatedFlow = await flowUpdateResponse.json();
+        console.log('✅ Flow updated. New event handlers:', JSON.stringify(updatedFlow.eventHandlers || []));
+      } else {
+        const flowError = await flowUpdateResponse.text();
+        console.error('❌ Failed to update flow handlers:', flowError);
+      }
+    } else {
+      console.error('❌ Failed to get flow:', await flowResponse.text());
+    }
+
+    // Train the agent to apply changes (using correct flow path)
+    const defaultFlowPath = `${agentName}/flows/00000000-0000-0000-0000-000000000000`;
+    console.log('🎓 Training agent flow:', defaultFlowPath);
+    
+    const trainResponse = await fetch(
+      `https://dialogflow.googleapis.com/v3/${defaultFlowPath}:train`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        }
+      }
+    );
+
+    if (trainResponse.ok) {
+      console.log('✅ Agent training started');
+    } else {
+      const trainError = await trainResponse.text();
+      console.error('⚠️ Training failed:', trainError);
+      // Training is optional - continue anyway
+    }
+
+    // Voice settings update (moved from original location)
 
     // Update voice settings if voice_id changed
     if (script?.voice_id) {
