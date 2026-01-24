@@ -1,6 +1,9 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
+// This bridge now uses Google Cloud STT via the process-recording function
+// instead of Twilio's built-in speech recognition which doesn't support Hebrew
+
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -86,12 +89,14 @@ serve(async (req) => {
         language
       });
 
+      // Use Record instead of Gather - this sends audio to process-recording 
+      // which uses Google Cloud STT for proper Hebrew/Arabic recognition
       const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Say language="${langCode}" voice="${voiceName}">${greeting}</Say>
-  <Gather input="speech" language="${langCode}" speechTimeout="auto" action="${supabaseUrl}/functions/v1/twilio-dialogflow-bridge" method="POST">
-    <Say language="${langCode}" voice="${voiceName}"></Say>
-  </Gather>
+  <Record maxLength="30" playBeep="false" timeout="3" 
+    action="${supabaseUrl}/functions/v1/process-recording" 
+    recordingStatusCallback="${supabaseUrl}/functions/v1/process-recording"/>
   <Say language="${langCode}" voice="${voiceName}">${language === 'he' ? 'לא שמעתי אותך. להתראות!' : 'I didn\'t hear you. Goodbye!'}</Say>
 </Response>`;
       
