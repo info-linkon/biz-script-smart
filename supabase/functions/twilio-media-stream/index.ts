@@ -76,6 +76,10 @@ interface ConversationState {
   detectedLanguage: string;
   voiceGender: 'FEMALE' | 'MALE';
   sttConfidence: number;
+  // Gender detection for natural conversation
+  detectedGender: 'male' | 'female' | null;
+  // Grace period for listening after greeting
+  greetingSentAt: number;
   // Business info for AI prompting
   businessInfo: BusinessInfo;
   // Phrase hints for STT
@@ -385,6 +389,13 @@ async function getAIResponse(
 function buildSystemPrompt(state: ConversationState): string {
   const { businessInfo, customerName } = state;
   
+  // Determine gender context for natural conversation
+  const genderContext = state.detectedGender === 'male' 
+    ? 'הלקוח הוא גבר - דבר בלשון זכר (שמח, מודה, רוצה)' 
+    : state.detectedGender === 'female'
+    ? 'הלקוחה היא אישה - דבר בלשון נקבה (שמחה, מודה, רוצה)'
+    : 'עדיין לא ברור מגדר הלקוח - השתמש בלשון ניטרלית כמו "נשמח לעזור", "אפשר לסייע" או פנייה ישירה ללקוח בשמו';
+  
   return `אתה נציג טלפוני מקצועי ואדיב של ${businessInfo.name}.
 
 ## כללים קריטיים:
@@ -393,8 +404,10 @@ function buildSystemPrompt(state: ConversationState): string {
 3. ${customerName ? `שם הלקוח: ${customerName} - השתמש בשם שלו בטבעיות` : 'שאל בנימוס את שם הלקוח אם טרם הזדהה'}
 4. ענה בצורה קצרה וידידותית - זו שיחת טלפון! מקסימום 2-3 משפטים
 5. אם הלקוח שואל משהו שאתה לא יודע - הצע שנציג יחזור אליו
-6. דבר בעברית טבעית ורהוטה, כמו ישראלי אמיתי
+6. דבר בעברית טבעית ורהוטה, כמו ישראלי אמיתי בשיחת טלפון יומיומית
 7. אל תשתמש בסמיילים או סימנים מיוחדים
+8. ${genderContext}
+9. דבר בטון חם ואנושי - כמו חבר שעוזר, לא כמו רובוט
 
 ## על העסק:
 ${businessInfo.name}
@@ -725,8 +738,36 @@ async function processAudioBuffer(
     state.sttConfidence = confidence;
     
     if (transcript) {
+      // Filter out very low confidence transcripts (likely noise)
+      if (confidence < 0.35 && transcript.length < 8) {
+        console.log('⚠️ Ignoring very low confidence transcript (likely noise):', transcript, '| Confidence:', (confidence*100).toFixed(0) + '%');
+        return;
+      }
+      
       // Update detected language
       state.detectedLanguage = detectedLanguage;
+      
+      // Detect gender from transcript
+      if (!state.detectedGender) {
+        const malePatterns = /\b(אני רוצה|אני צריך|אני מחפש|אני שמח|קוראים לי|שמי|אני מדבר|רציתי)\b/;
+        const femalePatterns = /\b(אני רוצה|אני צריכה|אני מחפשת|אני שמחה|קוראים לי|שמי|אני מדברת|רציתי)\b/;
+        const maleNames = /\b(עומר|דני|יוסי|אבי|משה|דוד|יעקב|אריאל|רון|עידו|גיל|אסף|שי|תומר|יניב|אייל|גל)\b/i;
+        const femaleNames = /\b(רונית|שרה|מיכל|חנה|רחל|לאה|יעל|נועה|מאיה|שירה|עדי|ליאת|טל|דנה|הילה|אורית)\b/i;
+        
+        if (femalePatterns.test(transcript) && transcript.includes('ה')) {
+          state.detectedGender = 'female';
+          console.log('👩 Detected female caller from patterns');
+        } else if (femaleNames.test(transcript)) {
+          state.detectedGender = 'female';
+          console.log('👩 Detected female caller from name');
+        } else if (maleNames.test(transcript)) {
+          state.detectedGender = 'male';
+          console.log('👨 Detected male caller from name');
+        } else if (malePatterns.test(transcript)) {
+          state.detectedGender = 'male';
+          console.log('👨 Detected male caller from patterns');
+        }
+      }
       
       // Add user message to history
       state.conversationHistory.push({
@@ -1012,12 +1053,16 @@ serve(async (req) => {
               detectedLanguage: script?.language === 'he' ? 'he-IL' : script?.language === 'ar' ? 'ar-XA' : 'en-US',
               voiceGender: 'FEMALE',
               sttConfidence: 1.0,
+              // Gender detection (neutral until detected)
+              detectedGender: null,
+              // Grace period for listening after greeting
+              greetingSentAt: 0,
               // Business info
               businessInfo,
               phraseHints,
             };
             
-            // Send initial greeting with small delay for connection to stabilize
+            // Send initial greeting with longer delay for connection to stabilize
             if (accessToken && state) {
               const greetingState = state;
               const greetingToken = accessToken;
@@ -1025,19 +1070,22 @@ serve(async (req) => {
               setTimeout(async () => {
                 try {
                   greetingState.isAgentSpeaking = true;
-                  console.log('🎙️ Sending greeting after 500ms delay:', greetingState.greeting);
+                  greetingState.greetingSentAt = Date.now();
+                  console.log('🎙️ Sending greeting after 1000ms delay:', greetingState.greeting);
                   console.log('🔌 WebSocket readyState before greeting:', socket.readyState);
                   const greetingAudio = await synthesizeSpeech(greetingState.greeting, greetingToken);
                   const sent = sendAudioToTwilio(socket, greetingState.streamSid, greetingAudio);
                   if (!sent) {
                     console.error('❌ Failed to send greeting - WebSocket not ready');
                     greetingState.isAgentSpeaking = false;
+                  } else {
+                    console.log('✅ Greeting sent successfully');
                   }
                 } catch (err) {
                   console.error('Error sending greeting:', err);
                   greetingState.isAgentSpeaking = false;
                 }
-              }, 500); // Wait 500ms for connection to stabilize
+              }, 1000); // Wait 1000ms for connection to stabilize
             }
             
             // Log call start
