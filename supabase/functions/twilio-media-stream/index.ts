@@ -1169,7 +1169,10 @@ serve(async (req) => {
                 const lovableApiKey = Deno.env.get('LOVABLE_API_KEY');
                 let callSummary = '';
                 
-                if (lovableApiKey && state.conversationHistory.length > 2) {
+                console.log('📊 Call stats - History:', state.conversationHistory.length, 'turns, API key:', lovableApiKey ? 'present' : 'missing');
+                
+                // Generate summary if we have at least 2 messages (1 turn = user + agent)
+                if (lovableApiKey && state.conversationHistory.length >= 2) {
                   const summaryPrompt = `סכם את השיחה הטלפונית הבאה ב-2-3 משפטים קצרים בעברית. התמקד בעיקר: מה הלקוח רצה ומה סוכם.
 
 שיחה:
