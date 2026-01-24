@@ -227,7 +227,7 @@ async function transcribeAudio(
       encoding: 'MULAW',
       sampleRateHertz: 8000,
       languageCode: primaryLanguage,
-      alternativeLanguageCodes: ['en-US', 'ar-XA'],
+      // Removed alternativeLanguageCodes - not supported with phone_call enhanced model
       model: 'phone_call', // Optimized for telephony
       useEnhanced: true,   // Enhanced model for better accuracy
       enableAutomaticPunctuation: true,
