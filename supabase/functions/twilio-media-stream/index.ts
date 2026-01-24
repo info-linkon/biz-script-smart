@@ -657,64 +657,61 @@ function cleanAIResponse(response: string): string {
   return response;
 }
 
-// Get voice configuration based on detected language - UPGRADED to Chirp 3 HD (best quality!)
+// Get voice configuration based on detected language
+// UPDATED: Using Neural2 for Hebrew (better pronunciation of Hebrew words like בכיף, בוקר)
+// Chirp3-HD for English/Arabic (more natural but weaker Hebrew pronunciation)
 function getVoiceForLanguage(
   detectedLanguage: string, 
   voiceGender: 'FEMALE' | 'MALE',
   sttConfidence: number = 1.0
 ): { languageCode: string; name: string } {
   
-  // Chirp 3 HD voices - Google's highest quality multilingual voices
-  const chirp3Voices = {
-    hebrew: {
-      FEMALE: 'he-IL-Chirp3-HD-Aoede',   // Warm, natural female
-      MALE: 'he-IL-Chirp3-HD-Charon'     // Deep, professional male
-    },
-    arabic: {
-      FEMALE: 'ar-XA-Chirp3-HD-Aoede',
-      MALE: 'ar-XA-Chirp3-HD-Charon'
-    },
-    english: {
-      FEMALE: 'en-US-Chirp3-HD-Aoede',
-      MALE: 'en-US-Chirp3-HD-Charon'
-    }
+  // Neural2 voices for Hebrew - better pronunciation of Hebrew words
+  const hebrewVoices = {
+    FEMALE: 'he-IL-Neural2-A',   // Best Hebrew pronunciation
+    MALE: 'he-IL-Neural2-D'      // Best Hebrew pronunciation
   };
   
-  // Fallback to Neural2/Journey if Chirp 3 HD not available (higher quality than Wavenet)
-  const neural2Fallback = {
-    hebrew: { FEMALE: 'he-IL-Neural2-A', MALE: 'he-IL-Neural2-D' },
-    arabic: { FEMALE: 'ar-XA-Neural2-A', MALE: 'ar-XA-Neural2-D' },
-    english: { FEMALE: 'en-US-Journey-F', MALE: 'en-US-Journey-D' }  // Journey is best for English
+  // Chirp 3 HD for English/Arabic - more natural sounding
+  const otherVoices = {
+    arabic: {
+      FEMALE: 'ar-XA-Neural2-A',
+      MALE: 'ar-XA-Neural2-D'
+    },
+    english: {
+      FEMALE: 'en-US-Journey-F',   // Journey is Google's best English
+      MALE: 'en-US-Journey-D'
+    }
   };
   
   // If low confidence - always use Hebrew voice
   if (sttConfidence < 0.5 || !detectedLanguage) {
-    console.log('🎤 Low confidence or no language, using Hebrew Chirp3-HD voice');
+    console.log('🎤 Low confidence or no language, using Hebrew Neural2 voice');
     return { 
       languageCode: 'he-IL', 
-      name: chirp3Voices.hebrew[voiceGender]
+      name: hebrewVoices[voiceGender]
     };
   }
   
   const lang = detectedLanguage.toLowerCase();
   
   if (lang.startsWith('en')) {
-    console.log('🎤 Using English Chirp3-HD voice');
+    console.log('🎤 Using English Journey voice');
     return { 
       languageCode: 'en-US', 
-      name: chirp3Voices.english[voiceGender]
+      name: otherVoices.english[voiceGender]
     };
   } else if (lang.startsWith('ar')) {
-    console.log('🎤 Using Arabic Chirp3-HD voice');
+    console.log('🎤 Using Arabic Neural2 voice');
     return { 
       languageCode: 'ar-XA', 
-      name: chirp3Voices.arabic[voiceGender]
+      name: otherVoices.arabic[voiceGender]
     };
   } else {
-    console.log('🎤 Using Hebrew Chirp3-HD voice');
+    console.log('🎤 Using Hebrew Neural2 voice');
     return { 
       languageCode: 'he-IL', 
-      name: chirp3Voices.hebrew[voiceGender]
+      name: hebrewVoices[voiceGender]
     };
   }
 }
@@ -760,31 +757,19 @@ async function synthesizeSpeech(
         audioEncoding: 'MULAW',
         sampleRateHertz: 8000,
         effectsProfileId: ['telephony-class-application'],
-        speakingRate: 1.0,   // Natural speaking rate for Chirp 3
-        // NOTE: No pitch parameter - Chirp3-HD doesn't support it!
+        speakingRate: 1.05,   // Slightly faster for lower latency
+        pitch: 0.2,           // Slight warmth - Neural2 supports pitch
       },
     }),
   });
 
   const data = await response.json();
   
-  // Fallback to Neural2/Journey if Chirp 3 HD not available (much better than Wavenet!)
+  // Handle errors - try with standard voice settings
   if (data.error) {
-    console.log('⚠️ Chirp3-HD unavailable, trying Neural2/Journey fallback:', data.error.message);
+    console.log('⚠️ TTS error, retrying with default settings:', data.error.message);
     
-    // Neural2/Journey fallback mapping - higher quality than Wavenet
-    const fallbackMap: Record<string, Record<string, string>> = {
-      'he-IL': { FEMALE: 'he-IL-Neural2-A', MALE: 'he-IL-Neural2-D' },
-      'ar-XA': { FEMALE: 'ar-XA-Neural2-A', MALE: 'ar-XA-Neural2-D' },
-      'en-US': { FEMALE: 'en-US-Journey-F', MALE: 'en-US-Journey-D' },  // Journey is Google's best English
-    };
-    
-    const langFallback = fallbackMap[voiceConfig.languageCode] || fallbackMap['he-IL'];
-    const fallbackVoice = langFallback[voiceGender] || langFallback['FEMALE'];
-    
-    console.log('🔄 Using fallback voice:', fallbackVoice);
-    
-    const fallbackResponse = await fetch('https://texttospeech.googleapis.com/v1/text:synthesize', {
+    const retryResponse = await fetch('https://texttospeech.googleapis.com/v1/text:synthesize', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${accessToken}`,
@@ -794,24 +779,23 @@ async function synthesizeSpeech(
         input: { text },
         voice: {
           languageCode: voiceConfig.languageCode,
-          name: fallbackVoice,
+          name: voiceConfig.name,
         },
         audioConfig: {
           audioEncoding: 'MULAW',
           sampleRateHertz: 8000,
           effectsProfileId: ['telephony-class-application'],
-          speakingRate: 1.0,
-          pitch: 0.2,  // Neural2/Journey DO support pitch - slight warmth
+          speakingRate: 1.0,  // Standard rate on retry
         },
       }),
     });
     
-    const fallbackData = await fallbackResponse.json();
-    if (fallbackData.audioContent) {
-      console.log('✅ Neural2/Journey fallback succeeded');
-      return fallbackData.audioContent;
+    const retryData = await retryResponse.json();
+    if (retryData.audioContent) {
+      console.log('✅ TTS retry succeeded');
+      return retryData.audioContent;
     } else {
-      console.error('❌ Fallback also failed:', fallbackData.error);
+      console.error('❌ TTS retry also failed:', retryData.error);
     }
   }
   
@@ -1182,10 +1166,10 @@ serve(async (req) => {
     let state: ConversationState | null = null;
     let accessToken: string | null = null;
     
-    // VAD-based endpoint detection constants - OPTIMIZED to filter noise
-    const END_OF_UTTERANCE_SILENCE_MS = 1200;  // Allow natural pauses
+    // VAD-based endpoint detection constants - OPTIMIZED for low latency
+    const END_OF_UTTERANCE_SILENCE_MS = 800;   // Reduced from 1200ms for faster response
     const MAX_UTTERANCE_MS = 12000;             // Max utterance length
-    const MIN_SPEECH_MS = 500;                  // Increased from 300ms - filter short bursts
+    const MIN_SPEECH_MS = 500;                  // Filter short bursts
     const MIN_AUDIO_BYTES = 2000;               // Require enough audio data
     
     socket.onopen = () => {
