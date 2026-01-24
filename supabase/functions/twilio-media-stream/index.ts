@@ -51,6 +51,8 @@ interface ConversationState {
   conversationHistory: { role: 'user' | 'agent'; text: string; timestamp: number }[];
   customerName: string | null;
   customerPhone: string | null;
+  customerTopic: string | null;  // What the customer is looking for
+  customerRequests: string[];     // Accumulated requests/interests
   turnCount: number;
   // Echo suppression
   lastTTSEndTime: number;
@@ -284,7 +286,7 @@ async function queryDialogflow(
   conversationHistory: { role: string; text: string }[] = [],
   customerName: string | null = null,
   detectedLanguage: string = 'he-IL'
-): Promise<{ response: string; extractedName?: string; extractedPhone?: string }> {
+): Promise<{ response: string; extractedName?: string; extractedPhone?: string; extractedTopic?: string }> {
   console.log('🤖 Querying Dialogflow with:', text);
   
   const dialogflowUrl = `https://global-dialogflow.googleapis.com/v3/projects/${projectId}/locations/global/agents/${agentId}/sessions/${sessionId}:detectIntent`;
@@ -325,21 +327,59 @@ async function queryDialogflow(
   const data = await response.json();
   console.log('🤖 Dialogflow response:', JSON.stringify(data));
 
-  // Extract customer name from response if mentioned
+  // Extract customer name from response if mentioned - MULTI-LANGUAGE
   let extractedName: string | undefined;
   let extractedPhone: string | undefined;
+  let extractedTopic: string | undefined;
   
-  // Check for name extraction from introduction patterns
-  const namePatterns = [
-    /(?:אני|שמי|קוראים לי)\s+([א-ת]+)/,
-    /^([א-ת]+)\s+(?:פה|כאן|מדבר)/
+  // Hebrew name patterns
+  const hebrewNamePatterns = [
+    /(?:אני|שמי|קוראים לי|זה)\s+([א-ת]{2,15})/,
+    /^([א-ת]{2,15})\s+(?:פה|כאן|מדבר|מדברת)/,
+    /(?:השם שלי|שם שלי)\s+([א-ת]{2,15})/
   ];
   
-  for (const pattern of namePatterns) {
+  // English name patterns
+  const englishNamePatterns = [
+    /(?:my name is|i'm|i am|this is|call me)\s+([A-Za-z]{2,20})/i,
+    /^([A-Z][a-z]+)\s+(?:here|speaking|calling)/
+  ];
+  
+  // Arabic name patterns
+  const arabicNamePatterns = [
+    /(?:اسمي|أنا)\s+([\u0600-\u06FF]{2,20})/,
+    /^([\u0600-\u06FF]{2,20})\s+(?:هنا|يتحدث)/
+  ];
+  
+  // Try all patterns based on detected language
+  const allNamePatterns = [...hebrewNamePatterns, ...englishNamePatterns, ...arabicNamePatterns];
+  
+  for (const pattern of allNamePatterns) {
     const match = text.match(pattern);
     if (match) {
       extractedName = match[1];
       console.log('📛 Extracted customer name:', extractedName);
+      break;
+    }
+  }
+  
+  // Topic extraction patterns - what is the customer looking for?
+  const topicPatterns = [
+    // Hebrew
+    /(?:אני מחפש|אני צריך|אני רוצה|מעוניין ב|רוצה לדעת על|שאלה לגבי|בקשר ל)\s*(.+?)(?:[.,?!]|$)/,
+    /(?:מתעניין ב|צריך עזרה עם|יש לי שאלה על)\s*(.+?)(?:[.,?!]|$)/,
+    // English
+    /(?:i need|i want|i'm looking for|interested in|question about|regarding)\s+(.+?)(?:[.,?!]|$)/i,
+    /(?:can you help me with|tell me about)\s+(.+?)(?:[.,?!]|$)/i,
+    // Arabic
+    /(?:أريد|أبحث عن|أحتاج|سؤال حول)\s+([\u0600-\u06FF\s]+?)(?:[.,?!]|$)/
+  ];
+  
+  for (const pattern of topicPatterns) {
+    const match = text.match(pattern);
+    if (match && match[1].length > 3) {
+      extractedTopic = match[1].trim();
+      console.log('📌 Extracted topic:', extractedTopic);
       break;
     }
   }
@@ -364,14 +404,11 @@ async function queryDialogflow(
   }
   
   // Personalize response with customer name if available
-  if (extractedName && !customerName) {
-    // First time we learn the name - already handled by intent
-  } else if (customerName && responseText.includes('לקוח')) {
-    // Replace generic 'לקוח' with actual name
+  if (customerName && responseText.includes('לקוח')) {
     responseText = responseText.replace(/לקוח/g, customerName);
   }
   
-  return { response: responseText, extractedName, extractedPhone };
+  return { response: responseText, extractedName, extractedPhone, extractedTopic };
 }
 
 // Get voice configuration based on detected language
@@ -600,6 +637,17 @@ async function processAudioBuffer(
         state.customerPhone = result.extractedPhone;
         console.log('📞 Phone captured:', state.customerPhone);
       }
+      if (result.extractedTopic) {
+        // Update topic or add to requests list
+        if (!state.customerTopic) {
+          state.customerTopic = result.extractedTopic;
+        }
+        // Add to requests list if not already there
+        if (!state.customerRequests.includes(result.extractedTopic)) {
+          state.customerRequests.push(result.extractedTopic);
+          console.log('📌 Added customer request:', result.extractedTopic);
+        }
+      }
       
       // Add agent response to history
       state.conversationHistory.push({
@@ -729,6 +777,8 @@ serve(async (req) => {
               conversationHistory: [],
               customerName: null,
               customerPhone: null,
+              customerTopic: null,
+              customerRequests: [],
               turnCount: 0,
               // Echo suppression
               lastTTSEndTime: 0,
