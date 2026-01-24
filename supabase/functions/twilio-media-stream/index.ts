@@ -122,7 +122,7 @@ const MULAW_DECODE_TABLE = [
   56, 48, 40, 32, 24, 16, 8, 0
 ];
 
-// Voice Activity Detection - improved thresholds for noise filtering
+// Voice Activity Detection - OPTIMIZED thresholds for better responsiveness
 function detectVoiceActivity(audioPayload: string, noiseFloor: number): { hasVoice: boolean; energy: number } {
   try {
     const audioBytes = Uint8Array.from(atob(audioPayload), c => c.charCodeAt(0));
@@ -134,9 +134,9 @@ function detectVoiceActivity(audioPayload: string, noiseFloor: number): { hasVoi
     }
     const rms = Math.sqrt(sumSquares / audioBytes.length);
     
-    // Increased thresholds for better noise filtering
-    const VOICE_THRESHOLD_DELTA = 1800;
-    const MIN_VOICE_ENERGY = 1000;
+    // OPTIMIZED: Lower thresholds for faster voice detection
+    const VOICE_THRESHOLD_DELTA = 1200;  // Reduced from 1800
+    const MIN_VOICE_ENERGY = 700;        // Reduced from 1000
     
     const threshold = Math.max(noiseFloor + VOICE_THRESHOLD_DELTA, MIN_VOICE_ENERGY);
     const hasVoice = rms > threshold;
@@ -595,7 +595,8 @@ async function synthesizeSpeech(
         audioEncoding: 'MULAW',
         sampleRateHertz: 8000,
         effectsProfileId: ['telephony-class-application'],
-        speakingRate: 0.95,
+        speakingRate: 1.05,  // OPTIMIZED: Faster, more natural speech
+        pitch: 0.5,          // Slightly higher pitch for warmth
       },
     }),
   });
@@ -739,14 +740,20 @@ async function processAudioBuffer(
     state.sttConfidence = confidence;
     
     if (transcript) {
-      // Filter out low confidence transcripts (likely noise) - increased thresholds
-      if (confidence < 0.45 && transcript.length < 10) {
-        console.log('⚠️ Ignoring low confidence transcript (likely noise):', transcript, '| Confidence:', (confidence*100).toFixed(0) + '%');
+      // OPTIMIZED: Lower confidence threshold with smart validation
+      // Only reject if BOTH confidence is very low AND transcript is very short
+      const hebrewWords = /[א-ת]{2,}/g;
+      const hebrewMatches = transcript.match(hebrewWords);
+      const hasHebrewContent = hebrewMatches !== null && hebrewMatches.length >= 1;
+      
+      // Accept if Hebrew content detected, even with lower confidence
+      if (!hasHebrewContent && confidence < 0.30 && transcript.length < 6) {
+        console.log('⚠️ Ignoring very low confidence short transcript:', transcript, '| Confidence:', (confidence*100).toFixed(0) + '%');
         return;
       }
       
-      // Grace period after greeting - ignore audio for 2 seconds to prevent echo/self-hearing
-      const GREETING_GRACE_PERIOD_MS = 2000;
+      // OPTIMIZED: Shorter grace period after greeting (1200ms instead of 2000ms)
+      const GREETING_GRACE_PERIOD_MS = 1200;
       if (state.greetingSentAt > 0 && Date.now() - state.greetingSentAt < GREETING_GRACE_PERIOD_MS) {
         console.log('⏳ In greeting grace period, ignoring transcript:', transcript);
         return;
@@ -950,11 +957,11 @@ serve(async (req) => {
     let state: ConversationState | null = null;
     let accessToken: string | null = null;
     
-    // VAD-based endpoint detection constants
-    const END_OF_UTTERANCE_SILENCE_MS = 1200;
-    const MAX_UTTERANCE_MS = 12000;
-    const MIN_SPEECH_MS = 300;
-    const MIN_AUDIO_BYTES = 1600;
+    // VAD-based endpoint detection constants - OPTIMIZED for faster responses
+    const END_OF_UTTERANCE_SILENCE_MS = 800;   // Reduced from 1200ms for faster response
+    const MAX_UTTERANCE_MS = 10000;             // Reduced from 12000ms
+    const MIN_SPEECH_MS = 200;                  // Reduced from 300ms
+    const MIN_AUDIO_BYTES = 1200;               // Reduced from 1600 bytes
     
     socket.onopen = () => {
       console.log('WebSocket connection opened');
@@ -1047,9 +1054,9 @@ serve(async (req) => {
               customerTopic: null,
               customerRequests: [],
               turnCount: 0,
-              // Echo suppression (increased for better handling)
+              // Echo suppression - OPTIMIZED for faster responses
               lastTTSEndTime: 0,
-              echoGracePeriodMs: 800,
+              echoGracePeriodMs: 500,  // Reduced from 800ms
               // VAD state
               isUserSpeaking: false,
               lastVoiceTime: 0,
@@ -1071,30 +1078,36 @@ serve(async (req) => {
               phraseHints,
             };
             
-            // Send initial greeting with longer delay for connection to stabilize
+            // OPTIMIZED: Send greeting much faster (300ms instead of 1000ms)
             if (accessToken && state) {
               const greetingState = state;
               const greetingToken = accessToken;
               
-              setTimeout(async () => {
-                try {
-                  greetingState.isAgentSpeaking = true;
-                  greetingState.greetingSentAt = Date.now();
-                  console.log('🎙️ Sending greeting after 1000ms delay:', greetingState.greeting);
-                  console.log('🔌 WebSocket readyState before greeting:', socket.readyState);
-                  const greetingAudio = await synthesizeSpeech(greetingState.greeting, greetingToken);
-                  const sent = sendAudioToTwilio(socket, greetingState.streamSid, greetingAudio);
-                  if (!sent) {
-                    console.error('❌ Failed to send greeting - WebSocket not ready');
-                    greetingState.isAgentSpeaking = false;
-                  } else {
-                    console.log('✅ Greeting sent successfully');
-                  }
-                } catch (err) {
-                  console.error('Error sending greeting:', err);
-                  greetingState.isAgentSpeaking = false;
-                }
-              }, 1000); // Wait 1000ms for connection to stabilize
+              // Pre-synthesize greeting immediately (don't wait for setTimeout)
+              synthesizeSpeech(greetingState.greeting, greetingToken, greetingState.voiceGender)
+                .then(greetingAudio => {
+                  // Send after brief delay for WebSocket to stabilize
+                  setTimeout(() => {
+                    try {
+                      greetingState.isAgentSpeaking = true;
+                      greetingState.greetingSentAt = Date.now();
+                      console.log('🎙️ Sending greeting after 300ms delay:', greetingState.greeting);
+                      const sent = sendAudioToTwilio(socket, greetingState.streamSid, greetingAudio);
+                      if (!sent) {
+                        console.error('❌ Failed to send greeting - WebSocket not ready');
+                        greetingState.isAgentSpeaking = false;
+                      } else {
+                        console.log('✅ Greeting sent successfully (optimized)');
+                      }
+                    } catch (err) {
+                      console.error('Error sending greeting:', err);
+                      greetingState.isAgentSpeaking = false;
+                    }
+                  }, 300); // OPTIMIZED: 300ms instead of 1000ms
+                })
+                .catch(err => {
+                  console.error('Error pre-synthesizing greeting:', err);
+                });
             }
             
             // Log call start
