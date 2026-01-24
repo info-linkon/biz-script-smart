@@ -139,7 +139,7 @@ function detectVoiceActivity(audioPayload: string, noiseFloor: number): { hasVoi
     // STRICTER: Higher thresholds to reduce false positives from background noise
     // noiseFloor * 6 instead of * 4 = less sensitive to noise spikes
     const VOICE_THRESHOLD_MULTIPLIER = 6;  // Increased from 4 to reduce false positives
-    const MIN_VOICE_ENERGY = 1500;         // Increased from 700 to ignore low-energy noise
+    const MIN_VOICE_ENERGY = 2500;         // Increased from 1500 to filter phone line noise
     
     const threshold = Math.max(noiseFloor * VOICE_THRESHOLD_MULTIPLIER, MIN_VOICE_ENERGY);
     const hasVoice = rms > threshold;
@@ -148,6 +148,53 @@ function detectVoiceActivity(audioPayload: string, noiseFloor: number): { hasVoi
   } catch {
     return { hasVoice: false, energy: 0 };
   }
+}
+
+// Calculate energy of a single audio chunk for trimming
+function calculateChunkEnergy(chunk: Uint8Array): number {
+  let sumSquares = 0;
+  for (let i = 0; i < chunk.length; i++) {
+    const linear16Sample = MULAW_DECODE_TABLE[chunk[i]];
+    sumSquares += linear16Sample * linear16Sample;
+  }
+  return Math.sqrt(sumSquares / chunk.length);
+}
+
+// Trim silence from beginning and end of audio buffer
+function trimSilenceFromAudio(audioBuffer: Uint8Array[], noiseFloor: number): Uint8Array[] {
+  if (audioBuffer.length === 0) return audioBuffer;
+  
+  // Threshold for speech detection during trimming
+  const ENERGY_THRESHOLD = Math.max(noiseFloor * 5, 2000);
+  
+  // Find where speech starts (skip leading silence)
+  let startIndex = 0;
+  for (let i = 0; i < audioBuffer.length; i++) {
+    const energy = calculateChunkEnergy(audioBuffer[i]);
+    if (energy > ENERGY_THRESHOLD) {
+      startIndex = Math.max(0, i - 2); // Keep 2 chunks before for context
+      break;
+    }
+  }
+  
+  // Find where speech ends (trim trailing silence)
+  let endIndex = audioBuffer.length - 1;
+  for (let i = audioBuffer.length - 1; i >= startIndex; i--) {
+    const energy = calculateChunkEnergy(audioBuffer[i]);
+    if (energy > ENERGY_THRESHOLD) {
+      endIndex = Math.min(audioBuffer.length - 1, i + 3); // Keep 3 chunks after
+      break;
+    }
+  }
+  
+  const originalLength = audioBuffer.length;
+  const trimmedBuffer = audioBuffer.slice(startIndex, endIndex + 1);
+  
+  if (trimmedBuffer.length < originalLength) {
+    console.log(`✂️ Trimmed audio: ${startIndex}-${endIndex} of ${originalLength} chunks (removed ${originalLength - trimmedBuffer.length} silence chunks)`);
+  }
+  
+  return trimmedBuffer;
 }
 
 // Send clear event to stop audio playback on Twilio
@@ -833,15 +880,33 @@ async function processAudioBuffer(
   console.log('🔄 Processing audio buffer, chunks:', state.audioBuffer.length, 'bytes:', state.totalBufferBytes);
   
   try {
-    // Combine all audio chunks
-    const combinedMulaw = new Uint8Array(state.totalBufferBytes);
+    // TRIM SILENCE: Remove leading/trailing silence before processing
+    const trimmedBuffer = trimSilenceFromAudio(state.audioBuffer, state.noiseFloor);
+    
+    // Check if enough audio remains after trimming
+    if (trimmedBuffer.length < 3) {
+      console.log('⏭️ Skipping: Audio too short after trimming (' + trimmedBuffer.length + ' chunks)');
+      state.audioBuffer = [];
+      state.totalBufferBytes = 0;
+      state.isProcessing = false;
+      return;
+    }
+    
+    // Calculate total bytes in trimmed buffer
+    let trimmedBytes = 0;
+    for (const chunk of trimmedBuffer) {
+      trimmedBytes += chunk.length;
+    }
+    
+    // Combine trimmed audio chunks
+    const combinedMulaw = new Uint8Array(trimmedBytes);
     let offset = 0;
-    for (const chunk of state.audioBuffer) {
+    for (const chunk of trimmedBuffer) {
       combinedMulaw.set(chunk, offset);
       offset += chunk.length;
     }
     
-    console.log('📦 Combined MULAW audio bytes:', combinedMulaw.length);
+    console.log('📦 Combined MULAW audio bytes:', combinedMulaw.length, '(original:', state.totalBufferBytes, ', trimmed:', trimmedBytes, ')');
     
     // Clear buffer
     state.audioBuffer = [];
@@ -1117,11 +1182,11 @@ serve(async (req) => {
     let state: ConversationState | null = null;
     let accessToken: string | null = null;
     
-    // VAD-based endpoint detection constants - BALANCED for accuracy over speed
-    const END_OF_UTTERANCE_SILENCE_MS = 1200;  // Increased from 800ms - allow natural pauses
-    const MAX_UTTERANCE_MS = 12000;             // Increased from 10000ms
-    const MIN_SPEECH_MS = 300;                  // Increased from 200ms - filter very short noise
-    const MIN_AUDIO_BYTES = 2000;               // Increased from 1200 - require more audio
+    // VAD-based endpoint detection constants - OPTIMIZED to filter noise
+    const END_OF_UTTERANCE_SILENCE_MS = 1200;  // Allow natural pauses
+    const MAX_UTTERANCE_MS = 12000;             // Max utterance length
+    const MIN_SPEECH_MS = 500;                  // Increased from 300ms - filter short bursts
+    const MIN_AUDIO_BYTES = 2000;               // Require enough audio data
     
     socket.onopen = () => {
       console.log('WebSocket connection opened');
