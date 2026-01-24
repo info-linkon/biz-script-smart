@@ -211,9 +211,9 @@ async function transcribeAudio(
   primaryLanguage: string = 'he-IL',
   phraseHints: string[] = []
 ): Promise<{ transcript: string | null; detectedLanguage: string; confidence: number }> {
-  console.log('🎤 Transcribing with V1 phone_call model, audio length:', mulawAudioBase64.length);
+  console.log('🎤 Transcribing with V1 default model (Hebrew supported), audio length:', mulawAudioBase64.length);
   
-  // Use stable V1 API with enhanced phone_call model
+  // Use stable V1 API with default model (phone_call doesn't support Hebrew)
   const sttUrl = 'https://speech.googleapis.com/v1/speech:recognize';
   
   // Build speech contexts for better business term recognition
@@ -227,9 +227,7 @@ async function transcribeAudio(
       encoding: 'MULAW',
       sampleRateHertz: 8000,
       languageCode: primaryLanguage,
-      // Removed alternativeLanguageCodes - not supported with phone_call enhanced model
-      model: 'phone_call', // Optimized for telephony
-      useEnhanced: true,   // Enhanced model for better accuracy
+      // Using default model - phone_call model doesn't support Hebrew (he-IL)
       enableAutomaticPunctuation: true,
       profanityFilter: false,
     },
