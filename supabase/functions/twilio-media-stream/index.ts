@@ -54,6 +54,9 @@ interface ConversationState {
   customerName: string | null;
   customerPhone: string | null;
   turnCount: number;
+  // Echo suppression
+  lastTTSEndTime: number; // When TTS finished sending
+  echoGracePeriodMs: number; // ms to ignore audio after TTS (prevents echo detection)
 }
 
 // Voice Activity Detection - detect if audio contains speech
@@ -514,6 +517,9 @@ serve(async (req) => {
               customerName: null,
               customerPhone: null,
               turnCount: 0,
+              // Echo suppression - prevent detecting TTS audio as user speech
+              lastTTSEndTime: 0,
+              echoGracePeriodMs: 800, // 800ms grace period after TTS ends
             };
             
             // Send initial greeting
@@ -556,15 +562,20 @@ serve(async (req) => {
               
               // Calculate average energy over recent history
               const avgEnergy = state.vadHistory.reduce((a, b) => a + b, 0) / state.vadHistory.length;
-              const hasConsistentVoice = avgEnergy > 12 && state.vadHistory.length >= 3;
+              const hasConsistentVoice = avgEnergy > 15 && state.vadHistory.length >= 4; // Higher threshold, more samples
               
-              // BARGE-IN: If agent is speaking and user starts talking
-              if (state.isAgentSpeaking && hasConsistentVoice && !state.isProcessing) {
-                console.log('🎤 Barge-in detected! User interrupted agent. Energy:', avgEnergy.toFixed(1));
+              // Echo suppression: Check if we're still in the grace period after TTS
+              const timeSinceTTS = Date.now() - state.lastTTSEndTime;
+              const isInEchoGracePeriod = timeSinceTTS < state.echoGracePeriodMs;
+              
+              // BARGE-IN: If agent is speaking and user starts talking (not echo)
+              if (state.isAgentSpeaking && hasConsistentVoice && !state.isProcessing && !isInEchoGracePeriod) {
+                console.log('🎤 Barge-in detected! User interrupted agent. Energy:', avgEnergy.toFixed(1), 'TimeSinceTTS:', timeSinceTTS);
                 
                 // Stop agent audio immediately
                 clearTwilioAudio(socket, state.streamSid);
                 state.isAgentSpeaking = false;
+                state.lastTTSEndTime = Date.now(); // Reset to prevent immediate re-trigger
                 
                 // Clear any pending silence timer
                 if (silenceTimer) {
@@ -673,10 +684,20 @@ serve(async (req) => {
             
           case 'mark':
             console.log('Mark received:', message.mark?.name);
-            // When audio playback completes, agent stops speaking
+            // When audio playback completes, add grace period before listening
             if (message.mark?.name === 'audio_complete' && state) {
-              state.isAgentSpeaking = false;
-              console.log('✅ Agent finished speaking, ready to listen');
+              // Mark when TTS ended for echo suppression
+              state.lastTTSEndTime = Date.now();
+              
+              // Wait grace period before accepting user input (clear any echo/noise)
+              setTimeout(() => {
+                if (state) {
+                  state.isAgentSpeaking = false;
+                  state.audioBuffer = []; // Clear any audio captured during echo period
+                  state.vadHistory = [];
+                  console.log('✅ Agent finished speaking, grace period complete, ready to listen');
+                }
+              }, 400); // 400ms grace period before listening
             }
             break;
             
