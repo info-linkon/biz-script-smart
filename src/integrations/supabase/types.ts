@@ -202,6 +202,7 @@ export type Database = {
           business_name: string | null
           business_type: string | null
           created_at: string
+          dialogflow_agent_id: string | null
           elevenlabs_agent_id: string | null
           id: string
           phone: string | null
@@ -218,6 +219,7 @@ export type Database = {
           business_name?: string | null
           business_type?: string | null
           created_at?: string
+          dialogflow_agent_id?: string | null
           elevenlabs_agent_id?: string | null
           id?: string
           phone?: string | null
@@ -234,6 +236,7 @@ export type Database = {
           business_name?: string | null
           business_type?: string | null
           created_at?: string
+          dialogflow_agent_id?: string | null
           elevenlabs_agent_id?: string | null
           id?: string
           phone?: string | null

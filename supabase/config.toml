@@ -44,3 +44,31 @@ verify_jwt = false
 
 [functions.vapi-webhook]
 verify_jwt = false
+
+# Google Dialogflow CX Functions
+[functions.google-create-agent]
+verify_jwt = false
+
+[functions.google-update-agent]
+verify_jwt = false
+
+[functions.google-get-credentials]
+verify_jwt = false
+
+[functions.google-webhook]
+verify_jwt = false
+
+[functions.google-schedule-appointment]
+verify_jwt = false
+
+[functions.google-get-availability]
+verify_jwt = false
+
+[functions.google-purchase-number]
+verify_jwt = false
+
+[functions.google-import-number]
+verify_jwt = false
+
+[functions.twilio-dialogflow-bridge]
+verify_jwt = false
