@@ -39,6 +39,27 @@ interface BusinessInfo {
   phoneNumber: string;
 }
 
+// ===== CONSTANTS: Week 1 Optimizations =====
+// Dynamic VAD: Pause words that require longer silence threshold
+const PAUSE_WORDS_REGEX = /רגע|שנייה|אממ|תן לי|بس|لحظة|يعني|wait|hold on/i;
+
+// FAQ patterns for router bypass
+const FAQ_PATTERNS = {
+  hours: /שעות|פתוח|סגור|עד מתי|מתי פותחים|מתי סוגרים|متى|ساعات|working hours|open|close/i,
+  address: /כתובת|איפה|איך מגיעים|מיקום|וين|عنوان|where|location|address/i,
+  whatsapp: /וואטסאפ|whatsapp|واتساب/i,
+  prices: /מחיר|עולה|כמה זה|تكلفة|كم|سعر|price|cost|how much/i,
+  cancel: /לבטל|ביטול|إلغاء|cancel/i,
+};
+
+// LLM Settings (Week 1 optimizations)
+const LLM_CONFIG = {
+  DEFAULT_TEMPERATURE: 0.35,
+  DEFAULT_MAX_TOKENS: 140,
+  COMPLEX_FLOW_MAX_TOKENS: 220,  // For appointment booking flows
+  MAX_RESPONSE_CHARS: 180,       // Post-process truncation
+};
+
 // ===== STREAMING STT MANAGER =====
 // Real-time speech recognition using Google Cloud Speech-to-Text streaming API
 interface StreamingSTTResult {
@@ -64,6 +85,8 @@ interface StreamingSTTManager {
   // For session management
   totalAudioDuration: number;
   chunkCount: number;
+  // Dynamic VAD
+  lastInterimCheck: number;
 }
 
 function createStreamingSTTManager(): StreamingSTTManager {
@@ -81,6 +104,7 @@ function createStreamingSTTManager(): StreamingSTTManager {
     onInterimResult: null,
     totalAudioDuration: 0,
     chunkCount: 0,
+    lastInterimCheck: 0,
   };
 }
 
@@ -195,9 +219,10 @@ async function transcribeAudioOptimized(
   const sttUrl = 'https://speech.googleapis.com/v1/speech:recognize';
   
   // Build speech contexts for better business term recognition
+  // Week 1: Reduced boost from 15 to 11 for more balanced recognition
   const speechContexts = phraseHints.length > 0 ? [{
     phrases: phraseHints.slice(0, 500),
-    boost: 15
+    boost: 11
   }] : [];
   
   // Alternative languages for auto-detection
@@ -476,9 +501,10 @@ async function transcribeAudio(
   
   const sttUrl = 'https://speech.googleapis.com/v1/speech:recognize';
   
+  // Week 1: Reduced boost from 15 to 11
   const speechContexts = phraseHints.length > 0 ? [{
     phrases: phraseHints.slice(0, 500),
-    boost: 15
+    boost: 11
   }] : [];
   
   const alternativeLanguages = ['he-IL', 'ar-XA', 'en-US'].filter(l => l !== primaryLanguage);
@@ -580,6 +606,10 @@ async function getAIResponse(
     { role: 'user' as const, content: transcript }
   ];
   
+  // Week 1 A1: Detect if this is a complex appointment flow
+  const isAppointmentFlow = /תור|פגישה|לקבוע|לשנות|לבטל|موعد|حجز|appointment|schedule|book/i.test(transcript);
+  const maxTokens = isAppointmentFlow ? LLM_CONFIG.COMPLEX_FLOW_MAX_TOKENS : LLM_CONFIG.DEFAULT_MAX_TOKENS;
+  
   try {
     const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
       method: 'POST',
@@ -590,8 +620,8 @@ async function getAIResponse(
       body: JSON.stringify({
         model: 'google/gemini-3-flash-preview',
         messages,
-        max_tokens: 200,
-        temperature: 0.7,
+        max_tokens: maxTokens,
+        temperature: LLM_CONFIG.DEFAULT_TEMPERATURE,
       })
     });
     
@@ -615,6 +645,19 @@ async function getAIResponse(
     
     // Clean up response - remove any unwanted AI phrases
     aiResponse = cleanAIResponse(aiResponse);
+    
+    // Week 1 A1: Post-process truncation - enforce max 180 chars
+    if (aiResponse.length > LLM_CONFIG.MAX_RESPONSE_CHARS) {
+      const sentences = aiResponse.split(/[.!?،؟]+/).filter((s: string) => s.trim().length > 0);
+      const firstSentence = sentences[0]?.trim() || aiResponse.substring(0, 80);
+      const followUpQuestion = state.detectedLanguage?.startsWith('ar') 
+        ? 'شو بعد؟' 
+        : state.detectedLanguage?.startsWith('en') 
+        ? 'Anything else?' 
+        : 'עוד משהו?';
+      aiResponse = firstSentence + '. ' + followUpQuestion;
+      console.log('✂️ Response truncated to:', aiResponse.length, 'chars');
+    }
     
     // Add natural filler words for Israeli spontaneous speech
     aiResponse = addFillerWords(aiResponse, state.turnCount, state.detectedLanguage);
@@ -750,6 +793,7 @@ Turn: ${state.turnCount + 1}`;
   return `${agentRole} ${businessInfo.name}. ${agentSpeakStyle}
 
 ## סגנון הדיבור שלך:
+- מקסימום 2 משפטים + שאלה אחת. בלי פסקאות. בלי רשימות.
 - משפטים קצרים. מקסימום 10-15 מילים לתשובה.
 - ${agentStyle}
 - מילות קישור טבעיות: "אוקיי", "יאללה", "רגע", "תשמע/תשמעי", "אין בעיה"
@@ -942,6 +986,103 @@ function cleanAIResponse(response: string): string {
   }
   
   return response;
+}
+
+// ===== Week 1 A4: FAQ Router =====
+// Bypass LLM for common FAQ intents - returns cached responses
+interface FAQMatch {
+  intent: 'hours' | 'address' | 'whatsapp' | 'prices' | 'cancel' | 'none';
+  response: string | null;
+  confidence: number;
+}
+
+function matchFAQ(transcript: string, businessInfo: BusinessInfo, detectedLanguage: string): FAQMatch {
+  const lowerTranscript = transcript.toLowerCase();
+  
+  // Check each FAQ pattern
+  for (const [intent, pattern] of Object.entries(FAQ_PATTERNS)) {
+    if (pattern.test(lowerTranscript)) {
+      const response = getFAQResponse(intent as keyof typeof FAQ_PATTERNS, businessInfo, detectedLanguage);
+      if (response) {
+        console.log('🎯 FAQ Match:', intent, '- bypassing LLM');
+        return { intent: intent as FAQMatch['intent'], response, confidence: 0.9 };
+      }
+    }
+  }
+  
+  return { intent: 'none', response: null, confidence: 0 };
+}
+
+function getFAQResponse(
+  intent: keyof typeof FAQ_PATTERNS, 
+  businessInfo: BusinessInfo, 
+  detectedLanguage: string
+): string | null {
+  const isArabic = detectedLanguage?.startsWith('ar');
+  const isEnglish = detectedLanguage?.startsWith('en');
+  
+  // Try to extract info from FAQ JSON
+  let faqData: Record<string, string> = {};
+  try {
+    if (businessInfo.faq) {
+      faqData = typeof businessInfo.faq === 'string' ? JSON.parse(businessInfo.faq) : businessInfo.faq;
+    }
+  } catch { /* ignore */ }
+  
+  switch (intent) {
+    case 'hours':
+      // Check FAQ for hours info
+      const hoursKey = Object.keys(faqData).find(k => 
+        /שעות|פתוח|hours|ساعات/i.test(k)
+      );
+      if (hoursKey && faqData[hoursKey]) {
+        return faqData[hoursKey];
+      }
+      // Default responses
+      if (isArabic) return 'لحظة بشوف لك الساعات. شو اليوم اللي بيناسبك؟';
+      if (isEnglish) return 'Let me check our hours. What day works for you?';
+      return 'רגע, אני בודק. איזה יום נוח לך?';
+      
+    case 'address':
+      const addressKey = Object.keys(faqData).find(k => 
+        /כתובת|מיקום|address|عنوان/i.test(k)
+      );
+      if (addressKey && faqData[addressKey]) {
+        return faqData[addressKey];
+      }
+      if (isArabic) return 'شو المنطقة اللي قريبة عليك؟ بقلك اقرب فرع.';
+      if (isEnglish) return 'Which area are you near? I\'ll find the closest branch.';
+      return 'מאיזה אזור אתה? אגיד לך הסניף הכי קרוב.';
+      
+    case 'whatsapp':
+      if (businessInfo.phoneNumber) {
+        if (isArabic) return `تمام، بعتلك رابط واتساب على ${businessInfo.phoneNumber}`;
+        if (isEnglish) return `Sure, I'll send you a WhatsApp link to ${businessInfo.phoneNumber}`;
+        return `מעולה, אשלח לך לינק לוואטסאפ למספר ${businessInfo.phoneNumber}`;
+      }
+      if (isArabic) return 'اوكي، شو رقم الواتساب تبعك؟';
+      if (isEnglish) return 'Sure, what\'s your WhatsApp number?';
+      return 'בטח, מה המספר שלך לוואטסאפ?';
+      
+    case 'prices':
+      const pricesKey = Object.keys(faqData).find(k => 
+        /מחיר|עלות|price|سعر/i.test(k)
+      );
+      if (pricesKey && faqData[pricesKey]) {
+        return faqData[pricesKey];
+      }
+      if (isArabic) return 'شو الخدمة اللي بتسأل عنها؟ بقلك السعر.';
+      if (isEnglish) return 'Which service are you asking about? I\'ll give you the price.';
+      return 'על איזה שירות מדובר? אגיד לך מחיר.';
+      
+    case 'cancel':
+      if (isArabic) return 'اوكي، شو اسمك عشان ابحث الموعد؟';
+      if (isEnglish) return 'Sure, what\'s your name so I can find your appointment?';
+      return 'בסדר, מה השם שלך שאמצא את התור?';
+      
+    default:
+      return null;
+  }
 }
 
 // Get voice configuration based on detected language - using Chirp 3 HD
@@ -1188,7 +1329,7 @@ const QUICK_FILLERS = {
   'en-US': ['Okay', 'Right', 'Sure'],
 };
 
-// Send immediate filler word for perceived responsiveness
+// Week 1 A2: Send immediate filler word ONLY if >650ms without audio
 async function sendImmediateFiller(
   socket: WebSocket,
   state: ConversationState,
@@ -1198,7 +1339,15 @@ async function sendImmediateFiller(
     return;
   }
   
-  if (Math.random() > 0.4) {
+  // Week 1 A2: Only send filler if >650ms have passed since last voice
+  const timeSinceLastVoice = Date.now() - state.lastVoiceTime;
+  if (timeSinceLastVoice < 650) {
+    console.log('⏭️ Skipping filler - only', timeSinceLastVoice, 'ms since voice');
+    return;
+  }
+  
+  // 50% chance to send filler (reduced from 60%)
+  if (Math.random() > 0.5) {
     return;
   }
   
@@ -1206,7 +1355,7 @@ async function sendImmediateFiller(
   const fillers = QUICK_FILLERS[lang as keyof typeof QUICK_FILLERS] || QUICK_FILLERS['he-IL'];
   const filler = fillers[Math.floor(Math.random() * fillers.length)];
   
-  console.log('⚡ Sending immediate filler:', filler);
+  console.log('⚡ Sending immediate filler after', timeSinceLastVoice, 'ms:', filler);
   
   try {
     const fillerAudio = await synthesizeSpeech(
@@ -1382,11 +1531,27 @@ async function processAudioWithStreaming(
       });
       state.turnCount++;
       
-      // Get AI response
-      const aiStartTime = Date.now();
-      const aiResult = await getAIResponse(transcript, state);
-      const aiTime = Date.now() - aiStartTime;
-      console.log(`🤖 AI response in ${aiTime}ms:`, aiResult.response);
+      // Week 1 A4: Try FAQ Router first before LLM
+      const faqMatch = matchFAQ(transcript, state.businessInfo, detectedLanguage);
+      
+      let aiResult: { response: string; extractedName?: string; extractedPhone?: string; extractedTopic?: string };
+      let aiTime = 0;
+      
+      if (faqMatch.response && faqMatch.confidence > 0.8) {
+        // FAQ match - bypass LLM entirely
+        console.log(`🎯 FAQ Router: Bypassed LLM for intent "${faqMatch.intent}"`);
+        aiResult = { 
+          response: faqMatch.response,
+          ...extractCustomerInfo(transcript)
+        };
+        aiTime = 0;
+      } else {
+        // No FAQ match - use LLM
+        const aiStartTime = Date.now();
+        aiResult = await getAIResponse(transcript, state);
+        aiTime = Date.now() - aiStartTime;
+        console.log(`🤖 AI response in ${aiTime}ms:`, aiResult.response);
+      }
       
       // Update customer info
       if (aiResult.extractedName && !state.customerName) {
@@ -1606,11 +1771,12 @@ serve(async (req) => {
     let state: ConversationState | null = null;
     let accessToken: string | null = null;
     
-    // VAD-based endpoint detection constants - OPTIMIZED for low latency
-    const END_OF_UTTERANCE_SILENCE_MS = 500;   // Reduced from 600ms for faster streaming response
+    // VAD-based endpoint detection constants - Week 1 A3: Dynamic silence thresholds
+    const DEFAULT_SILENCE_MS = 420;              // Faster default (was 500)
+    const PAUSE_WORD_SILENCE_MS = 750;           // Extended for pause words
     const MAX_UTTERANCE_MS = 12000;
-    const MIN_SPEECH_MS = 400;                  // Reduced from 500ms for faster streaming
-    const MIN_AUDIO_BYTES = 1600;               // Reduced from 2000 for faster streaming
+    const MIN_SPEECH_MS = 350;                   // Reduced from 400ms
+    const MIN_AUDIO_BYTES = 1600;
     
     socket.onopen = () => {
       console.log('WebSocket connection opened');
@@ -1823,18 +1989,23 @@ serve(async (req) => {
                 
                 state.lastAudioTime = now;
                 
-                // END OF UTTERANCE detection - OPTIMIZED for streaming
+                // END OF UTTERANCE detection - Week 1 A3: Dynamic VAD
                 if (state.isUserSpeaking && state.lastVoiceTime > 0) {
                   const silenceDuration = now - state.lastVoiceTime;
                   const speechDuration = state.speechStartTime ? now - state.speechStartTime : 0;
                   
-                  const hasEnoughSilence = silenceDuration >= END_OF_UTTERANCE_SILENCE_MS;
+                  // Week 1 A3: Dynamic silence threshold based on pause words
+                  const interimTranscript = state.streamingSTT.interimTranscript || '';
+                  const hasPauseWord = PAUSE_WORDS_REGEX.test(interimTranscript);
+                  const dynamicSilenceThreshold = hasPauseWord ? PAUSE_WORD_SILENCE_MS : DEFAULT_SILENCE_MS;
+                  
+                  const hasEnoughSilence = silenceDuration >= dynamicSilenceThreshold;
                   const hasMinSpeechDuration = speechDuration >= MIN_SPEECH_MS;
                   const hasEnoughAudio = state.streamingSTT.chunkCount >= (MIN_AUDIO_BYTES / 160);
                   const isMaxDuration = speechDuration >= MAX_UTTERANCE_MS;
                   
                   if ((hasEnoughSilence && hasMinSpeechDuration && hasEnoughAudio) || isMaxDuration) {
-                    console.log('🟡 STREAMING: Utterance END - Silence:', silenceDuration, 'ms, Duration:', speechDuration, 'ms');
+                    console.log('🟡 STREAMING: Utterance END - Silence:', silenceDuration, 'ms (threshold:', dynamicSilenceThreshold, 'ms), Duration:', speechDuration, 'ms');
                     
                     state.isUserSpeaking = false;
                     state.speechStartTime = null;
@@ -1850,7 +2021,7 @@ serve(async (req) => {
                 // Discard silent buffers
                 if (!state.isUserSpeaking && state.streamingSTT.isActive) {
                   const timeSinceLastAudio = now - state.lastAudioTime;
-                  if (timeSinceLastAudio > END_OF_UTTERANCE_SILENCE_MS) {
+                  if (timeSinceLastAudio > DEFAULT_SILENCE_MS) {
                     console.log('🗑️ STREAMING: Discarding silent buffer');
                     state.streamingSTT.isActive = false;
                     state.streamingSTT.audioChunksBuffer = [];
@@ -1976,8 +2147,14 @@ ${state.conversationHistory.map(h => `${h.role === 'user' ? 'לקוח' : 'נצי
   return new Response(
     JSON.stringify({
       status: 'ok',
-      message: 'Twilio Media Stream Handler with Streaming STT',
-      version: '3.0.0-streaming',
+      message: 'Twilio Media Stream Handler - Week 1 Optimizations',
+      version: '4.0.0-week1',
+      features: [
+        'A1: LLM hardening (temp 0.35, max_tokens 140, 180-char truncation)',
+        'A2: Smart bridging (650ms threshold)',
+        'A3: Dynamic VAD (420ms default, 750ms for pause words)',
+        'A4: FAQ Router (hours, address, whatsapp, prices, cancel)'
+      ]
     }),
     {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
