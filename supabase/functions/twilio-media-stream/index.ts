@@ -608,11 +608,23 @@ serve(async (req) => {
               
               // Calculate average energy over recent history
               const avgEnergy = state.vadHistory.reduce((a, b) => a + b, 0) / state.vadHistory.length;
-              const hasConsistentVoice = avgEnergy > 15 && state.vadHistory.length >= 4; // Higher threshold, more samples
+              const hasConsistentVoice = avgEnergy > 15 && state.vadHistory.length >= 4;
               
               // Echo suppression: Check if we're still in the grace period after TTS
               const timeSinceTTS = Date.now() - state.lastTTSEndTime;
-              const isInEchoGracePeriod = timeSinceTTS < state.echoGracePeriodMs;
+              const isInEchoGracePeriod = state.lastTTSEndTime > 0 && timeSinceTTS < state.echoGracePeriodMs;
+              
+              // Debug logging every 50 chunks (~1 second)
+              if (state.audioBuffer.length % 50 === 0) {
+                console.log('📊 Audio state:', {
+                  isAgentSpeaking: state.isAgentSpeaking,
+                  bufferSize: state.audioBuffer.length,
+                  avgEnergy: avgEnergy.toFixed(1),
+                  hasVoice: hasConsistentVoice,
+                  isEchoGrace: isInEchoGracePeriod,
+                  isProcessing: state.isProcessing
+                });
+              }
               
               // BARGE-IN: If agent is speaking and user starts talking (not echo)
               if (state.isAgentSpeaking && hasConsistentVoice && !state.isProcessing && !isInEchoGracePeriod) {
@@ -634,33 +646,79 @@ serve(async (req) => {
                 state.vadHistory = [];
               }
               
-              // Only buffer audio when agent is not speaking (or after barge-in)
+              // ALWAYS buffer audio when agent is not speaking
+              // This is the key fix - we buffer audio regardless of echo grace period
               if (!state.isAgentSpeaking) {
                 state.audioBuffer.push(message.media.payload);
                 state.lastAudioTime = Date.now();
                 
-                // Reset silence detection
+                // Log when we start buffering
+                if (state.audioBuffer.length === 1) {
+                  console.log('🎧 Started buffering audio');
+                }
+                
+                // Reset silence detection timer on each chunk
                 if (silenceTimer) {
                   clearTimeout(silenceTimer);
                 }
                 
                 // Start silence detection - process after silence
                 silenceTimer = setTimeout(async () => {
-                  if (!state || state.isProcessing || state.audioBuffer.length === 0) return;
+                  if (!state || state.isProcessing) {
+                    console.log('⏳ Silence timer fired but:', { 
+                      hasState: !!state, 
+                      isProcessing: state?.isProcessing 
+                    });
+                    return;
+                  }
+                  
+                  if (state.audioBuffer.length === 0) {
+                    console.log('⏳ Silence timer fired but buffer is empty');
+                    return;
+                  }
+                  
+                  // Check if we have enough audio (at least 10 chunks = ~200ms)
+                  if (state.audioBuffer.length < 10) {
+                    console.log('⏳ Not enough audio chunks:', state.audioBuffer.length);
+                    return;
+                  }
                   
                   state.isProcessing = true;
-                  console.log('Processing audio buffer, chunks:', state.audioBuffer.length);
+                  console.log('🔄 Processing audio buffer, chunks:', state.audioBuffer.length);
                   
                   try {
-                    // Combine all audio chunks
-                    const combinedAudio = state.audioBuffer.join('');
+                    // Combine all audio chunks properly as bytes, not string concatenation
+                    const audioChunks: Uint8Array[] = [];
+                    let totalLength = 0;
+                    
+                    for (const chunk of state.audioBuffer) {
+                      try {
+                        const bytes = Uint8Array.from(atob(chunk), c => c.charCodeAt(0));
+                        audioChunks.push(bytes);
+                        totalLength += bytes.length;
+                      } catch (e) {
+                        console.error('Failed to decode chunk:', e);
+                      }
+                    }
+                    
+                    // Combine into single buffer
+                    const combinedMulaw = new Uint8Array(totalLength);
+                    let offset = 0;
+                    for (const chunk of audioChunks) {
+                      combinedMulaw.set(chunk, offset);
+                      offset += chunk.length;
+                    }
+                    
+                    console.log('📦 Combined audio bytes:', totalLength);
+                    
                     state.audioBuffer = [];
                     
-                    // Decode mulaw and convert to linear16
-                    const mulawBytes = Uint8Array.from(atob(combinedAudio), c => c.charCodeAt(0));
-                    const linear16 = mulawToLinear16(mulawBytes);
+                    // Convert mulaw to linear16
+                    const linear16 = mulawToLinear16(combinedMulaw);
                     const linear16Bytes = new Uint8Array(linear16.buffer);
                     const linear16Base64 = btoa(String.fromCharCode(...linear16Bytes));
+                    
+                    console.log('🎤 Sending to STT, linear16 length:', linear16Base64.length);
                     
                     // Refresh token if needed
                     if (!accessToken) {
@@ -669,7 +727,7 @@ serve(async (req) => {
                     
                     // Transcribe
                     const transcript = await transcribeAudio(linear16Base64, accessToken, state.projectId);
-                    console.log('Transcript:', transcript);
+                    console.log('📝 Transcript:', transcript);
                     
                     if (transcript) {
                       // Add user message to conversation history
@@ -708,7 +766,7 @@ serve(async (req) => {
                         timestamp: Date.now()
                       });
                       
-                      console.log('Agent response:', result.response);
+                      console.log('🤖 Agent response:', result.response);
                       
                       // Mark agent as speaking before sending audio
                       state.isAgentSpeaking = true;
@@ -717,9 +775,11 @@ serve(async (req) => {
                       // Synthesize and send response
                       const responseAudio = await synthesizeSpeech(result.response, accessToken);
                       sendAudioToTwilio(socket, state.streamSid, responseAudio);
+                    } else {
+                      console.log('⚠️ No transcript returned from STT');
                     }
                   } catch (err) {
-                    console.error('Error processing audio:', err);
+                    console.error('❌ Error processing audio:', err);
                   } finally {
                     state.isProcessing = false;
                   }
@@ -729,21 +789,19 @@ serve(async (req) => {
             break;
             
           case 'mark':
-            console.log('Mark received:', message.mark?.name);
-            // When audio playback completes, add grace period before listening
+            console.log('🔔 Mark received:', message.mark?.name);
+            // When audio playback completes
             if (message.mark?.name === 'audio_complete' && state) {
               // Mark when TTS ended for echo suppression
               state.lastTTSEndTime = Date.now();
               
-              // Wait grace period before accepting user input (clear any echo/noise)
-              setTimeout(() => {
-                if (state) {
-                  state.isAgentSpeaking = false;
-                  state.audioBuffer = []; // Clear any audio captured during echo period
-                  state.vadHistory = [];
-                  console.log('✅ Agent finished speaking, grace period complete, ready to listen');
-                }
-              }, 400); // 400ms grace period before listening
+              // IMMEDIATELY start listening - no delay!
+              // The echo grace period only affects barge-in detection, not audio buffering
+              state.isAgentSpeaking = false;
+              state.vadHistory = [];
+              // DON'T clear audioBuffer - user might already be talking!
+              
+              console.log('✅ Agent finished speaking, immediately ready to listen. Buffer has:', state.audioBuffer.length, 'chunks');
             }
             break;
             
