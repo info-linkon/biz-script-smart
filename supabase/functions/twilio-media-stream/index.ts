@@ -84,6 +84,8 @@ interface ConversationState {
   businessInfo: BusinessInfo;
   // Phrase hints for STT
   phraseHints: string[];
+  // STT failure tracking for fallback prompt
+  consecutiveSTTFailures: number;
 }
 
 // MULAW decode table for proper energy calculation
@@ -122,7 +124,7 @@ const MULAW_DECODE_TABLE = [
   56, 48, 40, 32, 24, 16, 8, 0
 ];
 
-// Voice Activity Detection - OPTIMIZED thresholds for better responsiveness
+// Voice Activity Detection - STRICTER thresholds to reduce false positives
 function detectVoiceActivity(audioPayload: string, noiseFloor: number): { hasVoice: boolean; energy: number } {
   try {
     const audioBytes = Uint8Array.from(atob(audioPayload), c => c.charCodeAt(0));
@@ -134,11 +136,12 @@ function detectVoiceActivity(audioPayload: string, noiseFloor: number): { hasVoi
     }
     const rms = Math.sqrt(sumSquares / audioBytes.length);
     
-    // OPTIMIZED: Lower thresholds for faster voice detection
-    const VOICE_THRESHOLD_DELTA = 1200;  // Reduced from 1800
-    const MIN_VOICE_ENERGY = 700;        // Reduced from 1000
+    // STRICTER: Higher thresholds to reduce false positives from background noise
+    // noiseFloor * 6 instead of * 4 = less sensitive to noise spikes
+    const VOICE_THRESHOLD_MULTIPLIER = 6;  // Increased from 4 to reduce false positives
+    const MIN_VOICE_ENERGY = 1500;         // Increased from 700 to ignore low-energy noise
     
-    const threshold = Math.max(noiseFloor + VOICE_THRESHOLD_DELTA, MIN_VOICE_ENERGY);
+    const threshold = Math.max(noiseFloor * VOICE_THRESHOLD_MULTIPLIER, MIN_VOICE_ENERGY);
     const hasVoice = rms > threshold;
     
     return { hasVoice, energy: rms };
@@ -1000,8 +1003,39 @@ async function processAudioBuffer(
         state.sttConfidence
       );
       sendAudioToTwilio(socket, state.streamSid, responseAudio);
+      // Reset failure counter on successful transcription
+      state.consecutiveSTTFailures = 0;
     } else {
       console.log('⚠️ No transcript returned from STT');
+      
+      // Track consecutive failures and send fallback prompt
+      state.consecutiveSTTFailures++;
+      console.log('📊 Consecutive STT failures:', state.consecutiveSTTFailures);
+      
+      if (state.consecutiveSTTFailures >= 2 && !state.isAgentSpeaking) {
+        console.log('🔄 Sending fallback prompt due to STT failures');
+        
+        // Choose fallback prompt based on language
+        const fallbackPrompts: Record<string, string> = {
+          'he-IL': 'סליחה, לא שמעתי טוב. אפשר לחזור על זה?',
+          'ar-XA': 'عفوا، لم أسمعك جيدا. ممكن تعيد؟',
+          'en-US': 'Sorry, I didn\'t catch that. Could you repeat?',
+        };
+        const fallbackPrompt = fallbackPrompts[state.detectedLanguage] || fallbackPrompts['he-IL'];
+        
+        state.isAgentSpeaking = true;
+        const fallbackAudio = await synthesizeSpeech(
+          fallbackPrompt,
+          accessToken,
+          state.voiceGender,
+          state.detectedLanguage,
+          1.0
+        );
+        sendAudioToTwilio(socket, state.streamSid, fallbackAudio);
+        
+        // Reset counter after sending fallback
+        state.consecutiveSTTFailures = 0;
+      }
     }
   } catch (err) {
     console.error('❌ Error processing audio:', err);
@@ -1083,11 +1117,11 @@ serve(async (req) => {
     let state: ConversationState | null = null;
     let accessToken: string | null = null;
     
-    // VAD-based endpoint detection constants - OPTIMIZED for faster responses
-    const END_OF_UTTERANCE_SILENCE_MS = 800;   // Reduced from 1200ms for faster response
-    const MAX_UTTERANCE_MS = 10000;             // Reduced from 12000ms
-    const MIN_SPEECH_MS = 200;                  // Reduced from 300ms
-    const MIN_AUDIO_BYTES = 1200;               // Reduced from 1600 bytes
+    // VAD-based endpoint detection constants - BALANCED for accuracy over speed
+    const END_OF_UTTERANCE_SILENCE_MS = 1200;  // Increased from 800ms - allow natural pauses
+    const MAX_UTTERANCE_MS = 12000;             // Increased from 10000ms
+    const MIN_SPEECH_MS = 300;                  // Increased from 200ms - filter very short noise
+    const MIN_AUDIO_BYTES = 2000;               // Increased from 1200 - require more audio
     
     socket.onopen = () => {
       console.log('WebSocket connection opened');
@@ -1202,6 +1236,8 @@ serve(async (req) => {
               // Business info
               businessInfo,
               phraseHints,
+              // STT failure tracking
+              consecutiveSTTFailures: 0,
             };
             
             // OPTIMIZED: Send greeting much faster (300ms instead of 1000ms)
