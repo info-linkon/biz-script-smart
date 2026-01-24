@@ -1017,6 +1017,36 @@ function sendAudioToTwilio(
   return true;
 }
 
+// Send audio to Twilio WITHOUT mark - for fillers that shouldn't block the response
+function sendFillerAudioWithoutMark(
+  socket: WebSocket, 
+  streamSid: string, 
+  audioBase64: string
+): void {
+  if (socket.readyState !== WebSocket.OPEN) {
+    console.error('❌ WebSocket not open for filler');
+    return;
+  }
+  
+  const chunkSize = 160;
+  const audioBytes = Uint8Array.from(atob(audioBase64), c => c.charCodeAt(0));
+  
+  console.log('🔊 Sending filler audio (no mark), bytes:', audioBytes.length);
+  
+  for (let i = 0; i < audioBytes.length; i += chunkSize) {
+    const chunk = audioBytes.slice(i, Math.min(i + chunkSize, audioBytes.length));
+    const chunkBase64 = btoa(String.fromCharCode(...chunk));
+    
+    socket.send(JSON.stringify({
+      event: 'media',
+      streamSid,
+      media: { payload: chunkBase64 },
+    }));
+  }
+  
+  // NO mark event - this filler shouldn't "take a turn"
+}
+
 // Quick filler words for immediate feedback (pre-synthesized for speed)
 const QUICK_FILLERS = {
   'he-IL': ['אוקיי', 'טוב', 'רגע'],
@@ -1056,8 +1086,12 @@ async function sendImmediateFiller(
       1.0
     );
     
-    state.isAgentSpeaking = true;
-    sendAudioToTwilio(socket, state.streamSid, fillerAudio);
+    // Send filler WITHOUT setting isAgentSpeaking - this is just feedback, not a full turn
+    // Also send without mark so it doesn't block the actual response
+    sendFillerAudioWithoutMark(socket, state.streamSid, fillerAudio);
+    
+    // Brief pause for natural transition
+    await new Promise(r => setTimeout(r, 150));
   } catch (err) {
     console.error('⚠️ Failed to send filler:', err);
   }
@@ -1737,7 +1771,8 @@ serve(async (req) => {
                     state.speechStartTime = null;
                     
                     // Send immediate filler word for perceived responsiveness
-                    sendImmediateFiller(socket, state, accessToken!);
+                    // IMPORTANT: await to ensure filler completes before processing
+                    await sendImmediateFiller(socket, state, accessToken!);
                     
                     await processAudioBuffer(state, accessToken!, socket);
                   }
