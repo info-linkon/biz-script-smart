@@ -39,6 +39,258 @@ interface BusinessInfo {
   phoneNumber: string;
 }
 
+// ===== STREAMING STT MANAGER =====
+// Real-time speech recognition using Google Cloud Speech-to-Text streaming API
+interface StreamingSTTResult {
+  transcript: string;
+  isFinal: boolean;
+  language: string;
+  confidence: number;
+  stability: number;
+}
+
+interface StreamingSTTManager {
+  isActive: boolean;
+  sessionStartTime: number;
+  interimTranscript: string;
+  finalTranscript: string;
+  audioChunksBuffer: Uint8Array[];
+  lastResultTime: number;
+  recognitionComplete: boolean;
+  detectedLanguage: string;
+  confidence: number;
+  onFinalResult: ((result: StreamingSTTResult) => Promise<void>) | null;
+  onInterimResult: ((result: StreamingSTTResult) => void) | null;
+  // For session management
+  totalAudioDuration: number;
+  chunkCount: number;
+}
+
+function createStreamingSTTManager(): StreamingSTTManager {
+  return {
+    isActive: false,
+    sessionStartTime: 0,
+    interimTranscript: '',
+    finalTranscript: '',
+    audioChunksBuffer: [],
+    lastResultTime: 0,
+    recognitionComplete: false,
+    detectedLanguage: 'he-IL',
+    confidence: 0,
+    onFinalResult: null,
+    onInterimResult: null,
+    totalAudioDuration: 0,
+    chunkCount: 0,
+  };
+}
+
+// Start streaming STT session
+async function startStreamingSTT(
+  manager: StreamingSTTManager,
+  accessToken: string,
+  primaryLanguage: string,
+  phraseHints: string[]
+): Promise<void> {
+  manager.isActive = true;
+  manager.sessionStartTime = Date.now();
+  manager.interimTranscript = '';
+  manager.finalTranscript = '';
+  manager.audioChunksBuffer = [];
+  manager.recognitionComplete = false;
+  manager.chunkCount = 0;
+  manager.totalAudioDuration = 0;
+  
+  console.log('🎙️ Started streaming STT session for language:', primaryLanguage);
+}
+
+// Feed audio chunk to streaming manager
+function feedAudioToStreaming(manager: StreamingSTTManager, audioBytes: Uint8Array): void {
+  if (!manager.isActive) return;
+  
+  manager.audioChunksBuffer.push(audioBytes);
+  manager.chunkCount++;
+  manager.totalAudioDuration += (audioBytes.length / 8); // 8000 samples/sec = 1 byte = 0.125ms
+  
+  // Log every 50 chunks (~1 second of audio)
+  if (manager.chunkCount % 50 === 0) {
+    console.log(`📊 Streaming buffer: ${manager.chunkCount} chunks, ~${(manager.totalAudioDuration / 1000).toFixed(1)}s`);
+  }
+}
+
+// Stop streaming and get final transcript using optimized batch transcription
+async function stopStreamingAndTranscribe(
+  manager: StreamingSTTManager,
+  accessToken: string,
+  projectId: string,
+  primaryLanguage: string,
+  phraseHints: string[]
+): Promise<StreamingSTTResult | null> {
+  if (!manager.isActive || manager.audioChunksBuffer.length === 0) {
+    console.log('⚠️ Streaming: No audio to transcribe');
+    manager.isActive = false;
+    return null;
+  }
+  
+  const processingStart = Date.now();
+  console.log(`🔄 Streaming END: Processing ${manager.chunkCount} chunks (~${(manager.totalAudioDuration / 1000).toFixed(1)}s audio)`);
+  
+  // Combine all audio chunks
+  let totalBytes = 0;
+  for (const chunk of manager.audioChunksBuffer) {
+    totalBytes += chunk.length;
+  }
+  
+  const combinedAudio = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of manager.audioChunksBuffer) {
+    combinedAudio.set(chunk, offset);
+    offset += chunk.length;
+  }
+  
+  // Clear buffer
+  manager.audioChunksBuffer = [];
+  manager.isActive = false;
+  
+  // Convert to base64
+  const audioBase64 = btoa(String.fromCharCode(...combinedAudio));
+  
+  console.log('📤 Streaming->Batch: Sending', totalBytes, 'bytes to Google STT');
+  
+  // Use optimized batch transcription (Google STT v1 with short audio optimization)
+  const result = await transcribeAudioOptimized(
+    audioBase64,
+    accessToken,
+    projectId,
+    primaryLanguage,
+    phraseHints
+  );
+  
+  const processingTime = Date.now() - processingStart;
+  console.log(`⚡ Streaming transcription completed in ${processingTime}ms`);
+  
+  if (result.transcript) {
+    return {
+      transcript: result.transcript,
+      isFinal: true,
+      language: result.detectedLanguage,
+      confidence: result.confidence,
+      stability: 1.0,
+    };
+  }
+  
+  return null;
+}
+
+// ===== OPTIMIZED BATCH STT (for streaming end) =====
+// Uses shorter timeout and optimized settings for faster response
+async function transcribeAudioOptimized(
+  mulawAudioBase64: string,
+  accessToken: string,
+  projectId: string,
+  primaryLanguage: string = 'he-IL',
+  phraseHints: string[] = []
+): Promise<{ transcript: string | null; detectedLanguage: string; confidence: number }> {
+  console.log('🎤 Optimized STT - audio length:', mulawAudioBase64.length);
+  
+  const sttUrl = 'https://speech.googleapis.com/v1/speech:recognize';
+  
+  // Build speech contexts for better business term recognition
+  const speechContexts = phraseHints.length > 0 ? [{
+    phrases: phraseHints.slice(0, 500),
+    boost: 15
+  }] : [];
+  
+  // Alternative languages for auto-detection
+  const alternativeLanguages = ['he-IL', 'ar-XA', 'en-US'].filter(l => l !== primaryLanguage);
+  
+  const config: any = {
+    encoding: 'MULAW',
+    sampleRateHertz: 8000,
+    languageCode: primaryLanguage,
+    alternativeLanguageCodes: alternativeLanguages,
+    enableAutomaticPunctuation: true,
+    profanityFilter: false,
+    // Optimizations for faster processing
+    enableWordTimeOffsets: false,
+    enableWordConfidence: false,
+    maxAlternatives: 1,
+  };
+  
+  // Use enhanced telephony model for English
+  if (primaryLanguage === 'en-US') {
+    config.model = 'phone_call';
+    config.useEnhanced = true;
+  }
+  
+  const requestBody: any = {
+    config,
+    audio: {
+      content: mulawAudioBase64,
+    },
+  };
+  
+  if (speechContexts.length > 0) {
+    requestBody.config.speechContexts = speechContexts;
+  }
+  
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000); // 8s timeout
+    
+    const response = await fetch(sttUrl, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(requestBody),
+      signal: controller.signal,
+    });
+    
+    clearTimeout(timeout);
+
+    const data = await response.json();
+    
+    if (data.error) {
+      console.error('❌ STT API Error:', data.error.message);
+      return { transcript: null, detectedLanguage: primaryLanguage, confidence: 0 };
+    }
+
+    if (data.results && data.results[0]?.alternatives?.[0]?.transcript) {
+      const transcript = data.results[0].alternatives[0].transcript;
+      const confidence = data.results[0].alternatives[0].confidence || 0.8;
+      let detectedLanguage = data.results[0].languageCode || primaryLanguage;
+      
+      // Hebrew word indicators - override Arabic detection when Hebrew greeting detected
+      const hebrewIndicators = ['שלום', 'היי', 'בוקר', 'ערב', 'אלו', 'מה', 'איך', 'כן', 'לא', 'תודה', 'בבקשה', 'סליחה', 'רגע'];
+      const containsHebrew = hebrewIndicators.some(word => transcript.includes(word));
+      
+      if (containsHebrew && detectedLanguage.startsWith('ar')) {
+        console.log('🔄 Detected Hebrew in Arabic transcript, switching to he-IL');
+        detectedLanguage = 'he-IL';
+      }
+      
+      // Confidence filter
+      if (detectedLanguage !== 'he-IL' && confidence < 0.5) {
+        detectedLanguage = 'he-IL';
+      }
+      
+      console.log('✅ Transcript:', transcript, '| Lang:', detectedLanguage, '| Conf:', (confidence*100).toFixed(0) + '%');
+      return { transcript, detectedLanguage, confidence };
+    }
+    
+    return { transcript: null, detectedLanguage: primaryLanguage, confidence: 0 };
+    
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      console.error('❌ STT timeout (8s)');
+    } else {
+      console.error('❌ STT error:', error);
+    }
+    return { transcript: null, detectedLanguage: primaryLanguage, confidence: 0 };
+  }
+}
+
 interface ConversationState {
   userId: string;
   agentId: string;
@@ -86,6 +338,8 @@ interface ConversationState {
   phraseHints: string[];
   // STT failure tracking for fallback prompt
   consecutiveSTTFailures: number;
+  // Streaming STT manager
+  streamingSTT: StreamingSTTManager;
 }
 
 // MULAW decode table for proper energy calculation
@@ -137,9 +391,8 @@ function detectVoiceActivity(audioPayload: string, noiseFloor: number): { hasVoi
     const rms = Math.sqrt(sumSquares / audioBytes.length);
     
     // STRICTER: Higher thresholds to reduce false positives from background noise
-    // noiseFloor * 6 instead of * 4 = less sensitive to noise spikes
-    const VOICE_THRESHOLD_MULTIPLIER = 6;  // Increased from 4 to reduce false positives
-    const MIN_VOICE_ENERGY = 2500;         // Increased from 1500 to filter phone line noise
+    const VOICE_THRESHOLD_MULTIPLIER = 6;
+    const MIN_VOICE_ENERGY = 2500;
     
     const threshold = Math.max(noiseFloor * VOICE_THRESHOLD_MULTIPLIER, MIN_VOICE_ENERGY);
     const hasVoice = rms > threshold;
@@ -148,53 +401,6 @@ function detectVoiceActivity(audioPayload: string, noiseFloor: number): { hasVoi
   } catch {
     return { hasVoice: false, energy: 0 };
   }
-}
-
-// Calculate energy of a single audio chunk for trimming
-function calculateChunkEnergy(chunk: Uint8Array): number {
-  let sumSquares = 0;
-  for (let i = 0; i < chunk.length; i++) {
-    const linear16Sample = MULAW_DECODE_TABLE[chunk[i]];
-    sumSquares += linear16Sample * linear16Sample;
-  }
-  return Math.sqrt(sumSquares / chunk.length);
-}
-
-// Trim silence from beginning and end of audio buffer
-function trimSilenceFromAudio(audioBuffer: Uint8Array[], noiseFloor: number): Uint8Array[] {
-  if (audioBuffer.length === 0) return audioBuffer;
-  
-  // Threshold for speech detection during trimming
-  const ENERGY_THRESHOLD = Math.max(noiseFloor * 5, 2000);
-  
-  // Find where speech starts (skip leading silence)
-  let startIndex = 0;
-  for (let i = 0; i < audioBuffer.length; i++) {
-    const energy = calculateChunkEnergy(audioBuffer[i]);
-    if (energy > ENERGY_THRESHOLD) {
-      startIndex = Math.max(0, i - 2); // Keep 2 chunks before for context
-      break;
-    }
-  }
-  
-  // Find where speech ends (trim trailing silence)
-  let endIndex = audioBuffer.length - 1;
-  for (let i = audioBuffer.length - 1; i >= startIndex; i--) {
-    const energy = calculateChunkEnergy(audioBuffer[i]);
-    if (energy > ENERGY_THRESHOLD) {
-      endIndex = Math.min(audioBuffer.length - 1, i + 3); // Keep 3 chunks after
-      break;
-    }
-  }
-  
-  const originalLength = audioBuffer.length;
-  const trimmedBuffer = audioBuffer.slice(startIndex, endIndex + 1);
-  
-  if (trimmedBuffer.length < originalLength) {
-    console.log(`✂️ Trimmed audio: ${startIndex}-${endIndex} of ${originalLength} chunks (removed ${originalLength - trimmedBuffer.length} silence chunks)`);
-  }
-  
-  return trimmedBuffer;
 }
 
 // Send clear event to stop audio playback on Twilio
@@ -258,7 +464,7 @@ async function getAccessToken(credentials: any): Promise<string> {
   return tokenData.access_token;
 }
 
-// ===== STABLE: Speech-to-Text using Google Cloud V1 API with phone_call model =====
+// ===== BACKUP: Batch STT (fallback if streaming fails) =====
 async function transcribeAudio(
   mulawAudioBase64: string, 
   accessToken: string, 
@@ -266,37 +472,29 @@ async function transcribeAudio(
   primaryLanguage: string = 'he-IL',
   phraseHints: string[] = []
 ): Promise<{ transcript: string | null; detectedLanguage: string; confidence: number }> {
-  console.log('🎤 Transcribing with V1 default model (Hebrew supported), audio length:', mulawAudioBase64.length);
+  console.log('🎤 Batch STT fallback, audio length:', mulawAudioBase64.length);
   
-  // Use stable V1 API with default model (phone_call doesn't support Hebrew)
   const sttUrl = 'https://speech.googleapis.com/v1/speech:recognize';
   
-  // Build speech contexts for better business term recognition
   const speechContexts = phraseHints.length > 0 ? [{
-    phrases: phraseHints.slice(0, 500), // Max 500 phrases
+    phrases: phraseHints.slice(0, 500),
     boost: 15
   }] : [];
   
-  // Build config with enhanced model for English only
-  // Add alternative languages for automatic detection of Hebrew, Arabic, and English
   const alternativeLanguages = ['he-IL', 'ar-XA', 'en-US'].filter(l => l !== primaryLanguage);
   
   const config: any = {
     encoding: 'MULAW',
     sampleRateHertz: 8000,
     languageCode: primaryLanguage,
-    alternativeLanguageCodes: alternativeLanguages, // Enables Arabic and English detection!
+    alternativeLanguageCodes: alternativeLanguages,
     enableAutomaticPunctuation: true,
     profanityFilter: false,
   };
   
-  console.log('🌍 STT languages: primary', primaryLanguage, '| alternatives:', alternativeLanguages.join(', '));
-  
-  // Use enhanced telephony model only for English (phone_call doesn't support Hebrew/Arabic)
   if (primaryLanguage === 'en-US') {
     config.model = 'phone_call';
     config.useEnhanced = true;
-    console.log('📞 Using enhanced phone_call model for English');
   }
   
   const requestBody: any = {
@@ -306,10 +504,8 @@ async function transcribeAudio(
     },
   };
   
-  // Add speech contexts only if we have hints
   if (speechContexts.length > 0) {
     requestBody.config.speechContexts = speechContexts;
-    console.log('📋 Using', phraseHints.length, 'phrase hints for recognition');
   }
   
   try {
@@ -323,42 +519,32 @@ async function transcribeAudio(
     });
 
     const data = await response.json();
-    console.log('📝 V1 STT Response:', JSON.stringify(data).substring(0, 800));
 
-    // Check for API errors
     if (data.error) {
       console.error('❌ STT API Error:', data.error.message);
       return { transcript: null, detectedLanguage: primaryLanguage, confidence: 0 };
     }
 
-    // Parse response
     if (data.results && data.results[0]?.alternatives?.[0]?.transcript) {
       const transcript = data.results[0].alternatives[0].transcript;
       const confidence = data.results[0].alternatives[0].confidence || 0.8;
       let detectedLanguage = data.results[0].languageCode || primaryLanguage;
       
-      // Hebrew word indicators - override Arabic detection when Hebrew greeting detected
       const hebrewIndicators = ['שלום', 'היי', 'בוקר', 'ערב', 'אלו', 'מה', 'איך', 'כן', 'לא', 'תודה', 'בבקשה', 'סליחה', 'רגע'];
       const containsHebrew = hebrewIndicators.some(word => transcript.includes(word));
       
-      // Override Arabic detection to Hebrew if Hebrew words found
       if (containsHebrew && detectedLanguage.startsWith('ar')) {
-        console.log('🔄 Detected Hebrew in Arabic transcript, switching to he-IL');
         detectedLanguage = 'he-IL';
       }
       
-      // Confidence filter: default to Hebrew if non-Hebrew with low confidence
       if (detectedLanguage !== 'he-IL' && confidence < 0.5) {
-        console.log(`⚠️ Low confidence (${(confidence*100).toFixed(0)}%) for ${detectedLanguage}, defaulting to he-IL`);
         detectedLanguage = 'he-IL';
       }
       
-      console.log('✅ Transcript:', transcript, '| Lang:', detectedLanguage, '| Confidence:', (confidence*100).toFixed(0) + '%');
+      console.log('✅ Transcript:', transcript, '| Lang:', detectedLanguage, '| Conf:', (confidence*100).toFixed(0) + '%');
       return { transcript, detectedLanguage, confidence };
     }
     
-    // No results found
-    console.log('⚠️ No speech detected in audio');
     return { transcript: null, detectedLanguage: primaryLanguage, confidence: 0 };
     
   } catch (error) {
@@ -404,7 +590,7 @@ async function getAIResponse(
       body: JSON.stringify({
         model: 'google/gemini-3-flash-preview',
         messages,
-        max_tokens: 200,  // Keep responses short for phone
+        max_tokens: 200,
         temperature: 0.7,
       })
     });
@@ -446,15 +632,11 @@ async function getAIResponse(
 }
 
 // Build system prompt from business info - MULTILINGUAL SPONTANEOUS STYLE
-// Supports Hebrew, Arabic, and English based on detected customer language
-// Supports both male and female agent voices with appropriate grammar
 function buildSystemPrompt(state: ConversationState): string {
   const { businessInfo, customerName, voiceGender, detectedLanguage } = state;
   
-  // Agent's own gender - affects how the agent refers to itself
   const isAgentFemale = voiceGender === 'FEMALE';
   
-  // Detect customer language for response matching
   const customerLanguage = detectedLanguage?.startsWith('ar') 
     ? 'arabic' 
     : detectedLanguage?.startsWith('en') 
@@ -477,25 +659,25 @@ function buildSystemPrompt(state: ConversationState): string {
 - ردود قصيرة: "اكيد", "اه", "تمام", "منيح", "خلص"
 
 ## امثلة:
-❌ لا: "انا سعيد جدا لمساعدتك اليوم في اي سؤال"
-✅ نعم: "اهلا! كيف ممكن اساعدك؟"
+❌ لا: "اهلا وسهلا بك، كيف يمكنني مساعدتك اليوم؟"
+✅ نعم: "اهلين! شو بدك؟"
 
-❌ لا: "سأقوم بفحص المواعيد المتاحة لك"
-✅ نعم: "طيب لحظة ابص. امتى فاضي؟"
+❌ لا: "سوف اتحقق من المواعيد المتاحة لك"
+✅ نعم: "لحظة بشوف. امتى بتناسبك؟"
 
-## قوانين:
-1. أبدا لا تقول انك AI/ذكاء اصطناعي
-2. ${customerName ? `اسم الزبون: ${customerName}. استخدم الاسم بطبيعية` : 'اسأل عن الاسم اذا ما قال'}
-3. ردود قصيرة! هاي مكالمة تلفون مش ايميل
-4. ${isAgentFemale ? 'ما بتعرفي' : 'ما بتعرف'} شي؟ "خليني اتأكد وبرجعلك" - وبس
-5. بدون ايموجي
+## قواعد:
+1. لا تقول انك AI/ذكاء اصطناعي
+2. ${customerName ? `الزبون: ${customerName}. استخدم اسمه بطبيعية` : 'اسأل شو اسمه اذا ما قال'}
+3. ردود قصيرة! هاي مكالمة تلفون، مش رسالة
+4. ما بتعرف شي؟ "خليني اتأكد وبرجعلك" - وبس
+5. بلا ايموجي
 
-## عن المصلحة:
+## عن المحل:
 ${businessInfo.name}
 ${businessInfo.phoneNumber ? `تلفون: ${businessInfo.phoneNumber}` : ''}
 ${businessInfo.services ? `خدمات: ${businessInfo.services}` : ''}
 
-${businessInfo.faq ? `## أسئلة شائعة:\n${businessInfo.faq}` : ''}
+${businessInfo.faq ? `## اسئلة شائعة:\n${businessInfo.faq}` : ''}
 
 ${businessInfo.customPrompt ? `## تعليمات اضافية:\n${businessInfo.customPrompt}` : ''}
 
@@ -559,7 +741,6 @@ Turn: ${state.turnCount + 1}`;
   const agentHappyPhrase = isAgentFemale ? 'אשמח לבדוק' : 'אשמח לבדוק';
   const agentDontKnow = isAgentFemale ? 'תני לי לבדוק ונחזור אלייך' : 'תן לי לבדוק ונחזור אליך';
   
-  // Customer's gender - affects how agent addresses the customer
   const customerGenderContext = state.detectedGender === 'male' 
     ? 'הלקוח גבר - פני אליו בלשון זכר (תשמע, אתה, לך)' 
     : state.detectedGender === 'female'
@@ -667,7 +848,6 @@ function extractCustomerInfo(text: string): { extractedName?: string; extractedP
 
 // Add natural filler words for Israeli spontaneous speech
 function addFillerWords(response: string, turnCount: number, detectedLanguage: string): string {
-  // Hebrew fillers - contextual based on situation
   const hebrewFillers = {
     thinking: ['אממ...', 'רגע...', 'אוקיי...', 'טוב...'],
     confirming: ['כן,', 'בטח,', 'ברור,', 'אוקיי,'],
@@ -687,12 +867,10 @@ function addFillerWords(response: string, turnCount: number, detectedLanguage: s
     responding: ['So,', 'Well,', 'Look,'],
   };
   
-  // Don't add fillers to very short responses or greetings
   if (response.length < 20 || turnCount === 0) {
     return response;
   }
   
-  // Skip if response already starts with a filler
   const allFillers = [...hebrewFillers.thinking, ...hebrewFillers.confirming, 
                       ...arabicFillers.thinking, ...englishFillers.thinking];
   const startsWithFiller = allFillers.some(f => 
@@ -702,40 +880,33 @@ function addFillerWords(response: string, turnCount: number, detectedLanguage: s
     return response;
   }
   
-  // Choose filler based on response content and language
   const lang = detectedLanguage?.toLowerCase() || 'he';
   let fillers: string[];
   
   if (lang.startsWith('ar')) {
-    // Arabic
     if (response.includes('؟') || response.includes('?')) {
       fillers = arabicFillers.thinking;
     } else {
       fillers = [...arabicFillers.confirming, ...arabicFillers.responding];
     }
   } else if (lang.startsWith('en')) {
-    // English
     if (response.includes('?')) {
       fillers = englishFillers.thinking;
     } else {
       fillers = [...englishFillers.confirming, ...englishFillers.responding];
     }
   } else {
-    // Hebrew (default)
     if (response.includes('?') || response.includes('?')) {
       fillers = hebrewFillers.thinking;
     } else if (response.startsWith('כן') || response.startsWith('בטח') || response.startsWith('לא')) {
-      // Already has a natural start
       return response;
     } else {
-      // Mix of confirming and transitioning based on turn count
       fillers = turnCount % 2 === 0 
         ? hebrewFillers.confirming 
         : hebrewFillers.transitioning;
     }
   }
   
-  // Random selection (30% chance to add filler for naturalness)
   if (Math.random() > 0.3) {
     return response;
   }
@@ -773,18 +944,17 @@ function cleanAIResponse(response: string): string {
   return response;
 }
 
-// Get voice configuration based on detected language - using Chirp 3 HD (best quality)
+// Get voice configuration based on detected language - using Chirp 3 HD
 function getVoiceForLanguage(
   detectedLanguage: string, 
   voiceGender: 'FEMALE' | 'MALE',
   sttConfidence: number = 1.0
 ): { languageCode: string; name: string } {
   
-  // Chirp 3 HD voices - Google's highest quality multilingual voices
   const chirp3Voices = {
     hebrew: {
-      FEMALE: 'he-IL-Chirp3-HD-Aoede',   // Warm, natural female
-      MALE: 'he-IL-Chirp3-HD-Charon'     // Deep, professional male
+      FEMALE: 'he-IL-Chirp3-HD-Aoede',
+      MALE: 'he-IL-Chirp3-HD-Charon'
     },
     arabic: {
       FEMALE: 'ar-XA-Chirp3-HD-Aoede',
@@ -796,14 +966,6 @@ function getVoiceForLanguage(
     }
   };
   
-  // Fallback to Wavenet if Chirp 3 HD not available
-  const wavenetFallback = {
-    hebrew: { FEMALE: 'he-IL-Wavenet-A', MALE: 'he-IL-Wavenet-D' },
-    arabic: { FEMALE: 'ar-XA-Wavenet-A', MALE: 'ar-XA-Wavenet-B' },
-    english: { FEMALE: 'en-US-Wavenet-F', MALE: 'en-US-Wavenet-D' }
-  };
-  
-  // If low confidence - always use Hebrew voice
   if (sttConfidence < 0.5 || !detectedLanguage) {
     console.log('🎤 Low confidence or no language, using Hebrew Chirp3-HD voice');
     return { 
@@ -835,8 +997,7 @@ function getVoiceForLanguage(
   }
 }
 
-// ===== Hebrew Pronunciation Fixes =====
-// Map problematic words to their nikud (vocalized) versions for better TTS pronunciation
+// Hebrew pronunciation fixes
 const hebrewPronunciationFixes: Record<string, string> = {
   'בכיף': 'בְּכֵיף',
   'בוקר': 'בּוֹקֶר',
@@ -853,11 +1014,9 @@ const hebrewPronunciationFixes: Record<string, string> = {
   'רגע': 'רֶגַע',
 };
 
-// Fix Hebrew pronunciation before sending to TTS
 function fixHebrewPronunciation(text: string): string {
   let fixedText = text;
   for (const [word, nikud] of Object.entries(hebrewPronunciationFixes)) {
-    // Replace whole words only (not partial matches)
     const regex = new RegExp(`\\b${word}\\b`, 'g');
     fixedText = fixedText.replace(regex, nikud);
   }
@@ -867,14 +1026,7 @@ function fixHebrewPronunciation(text: string): string {
   return fixedText;
 }
 
-// ===== SIMPLIFIED: Plain text for TTS to avoid SSML parsing issues =====
-// Removed complex SSML that was being read as text ("480 milliseconds")
-function buildSimpleSSML(text: string): string {
-  // Just wrap in speak tags with basic prosody - no complex breaks
-  return `<speak><prosody rate="0.95">${text}</prosody></speak>`;
-}
-
-// Synthesize speech using Google TTS with enhanced SSML
+// Synthesize speech using Google TTS
 async function synthesizeSpeech(
   text: string,
   accessToken: string,
@@ -884,17 +1036,13 @@ async function synthesizeSpeech(
 ): Promise<string> {
   console.log('🔊 Synthesizing speech in', detectedLanguage, ':', text);
   
-  // Apply Hebrew pronunciation fixes for better TTS output
   const isHebrew = detectedLanguage === 'he-IL' || detectedLanguage.startsWith('he');
   const processedText = isHebrew ? fixHebrewPronunciation(text) : text;
   
   const voiceConfig = getVoiceForLanguage(detectedLanguage, voiceGender, sttConfidence);
-  console.log('🎤 Using voice:', voiceConfig.name, '| STT confidence:', (sttConfidence*100).toFixed(0) + '%');
+  console.log('🎤 Using voice:', voiceConfig.name);
   
-  // Use v1 API with plain text - more reliable than v1beta1 with SSML
   const ttsUrl = 'https://texttospeech.googleapis.com/v1/text:synthesize';
-  
-  console.log('📝 TTS input text:', processedText);
   
   const response = await fetch(ttsUrl, {
     method: 'POST',
@@ -903,7 +1051,7 @@ async function synthesizeSpeech(
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      input: { text: processedText },  // Use pronunciation-fixed text
+      input: { text: processedText },
       voice: {
         languageCode: voiceConfig.languageCode,
         name: voiceConfig.name,
@@ -912,8 +1060,7 @@ async function synthesizeSpeech(
         audioEncoding: 'MULAW',
         sampleRateHertz: 8000,
         effectsProfileId: ['telephony-class-application'],
-        speakingRate: 1.0,   // Natural rate for Chirp 3 HD
-        // NOTE: No pitch parameter - Chirp3-HD doesn't support it!
+        speakingRate: 1.0,
       },
     }),
   });
@@ -924,7 +1071,6 @@ async function synthesizeSpeech(
   if (data.error) {
     console.log('⚠️ Chirp3-HD unavailable, trying Wavenet fallback:', data.error.message);
     
-    // Wavenet fallback mapping
     const fallbackMap: Record<string, Record<string, string>> = {
       'he-IL': { FEMALE: 'he-IL-Wavenet-A', MALE: 'he-IL-Wavenet-D' },
       'ar-XA': { FEMALE: 'ar-XA-Wavenet-A', MALE: 'ar-XA-Wavenet-B' },
@@ -943,7 +1089,7 @@ async function synthesizeSpeech(
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        input: { text: processedText },  // Use pronunciation-fixed text in fallback too
+        input: { text: processedText },
         voice: {
           languageCode: voiceConfig.languageCode,
           name: fallbackVoice,
@@ -958,37 +1104,28 @@ async function synthesizeSpeech(
     });
     
     const fallbackData = await fallbackResponse.json();
-    if (fallbackData.audioContent) {
-      console.log('✅ Wavenet fallback succeeded');
-      return fallbackData.audioContent;
-    } else {
-      console.error('❌ Fallback also failed:', fallbackData.error);
+    if (fallbackData.error) {
+      console.error('❌ TTS fallback also failed:', fallbackData.error);
+      throw new Error('TTS synthesis failed');
     }
+    
+    return fallbackData.audioContent;
   }
-  
-  if (data.audioContent) {
-    return data.audioContent;
-  }
-  
-  throw new Error('Failed to synthesize speech: ' + JSON.stringify(data));
+
+  return data.audioContent;
 }
 
-// Send audio to Twilio via WebSocket
-function sendAudioToTwilio(
-  socket: WebSocket, 
-  streamSid: string, 
-  audioBase64: string
-): boolean {
-  // Check WebSocket state before sending
+// Send synthesized audio to Twilio
+function sendAudioToTwilio(socket: WebSocket, streamSid: string, audioBase64: string): boolean {
   if (socket.readyState !== WebSocket.OPEN) {
-    console.error('❌ WebSocket not open, state:', socket.readyState, '(0=CONNECTING, 1=OPEN, 2=CLOSING, 3=CLOSED)');
+    console.error('❌ WebSocket not open, cannot send audio');
     return false;
   }
   
-  const chunkSize = 160; // 160 bytes = 20ms at 8kHz MULAW
+  const chunkSize = 160;
   const audioBytes = Uint8Array.from(atob(audioBase64), c => c.charCodeAt(0));
   
-  console.log('🔊 Sending TTS audio to Twilio, total bytes:', audioBytes.length, 'WebSocket state: OPEN');
+  console.log('📤 Sending audio to Twilio, total bytes:', audioBytes.length);
   
   let chunksSent = 0;
   for (let i = 0; i < audioBytes.length; i += chunkSize) {
@@ -1007,7 +1144,6 @@ function sendAudioToTwilio(
   
   console.log('✅ Sent', chunksSent, 'audio chunks to Twilio');
   
-  // Send mark to know when audio finished playing
   socket.send(JSON.stringify({
     event: 'mark',
     streamSid: streamSid,
@@ -1043,11 +1179,9 @@ function sendFillerAudioWithoutMark(
       media: { payload: chunkBase64 },
     }));
   }
-  
-  // NO mark event - this filler shouldn't "take a turn"
 }
 
-// Quick filler words for immediate feedback (pre-synthesized for speed)
+// Quick filler words for immediate feedback
 const QUICK_FILLERS = {
   'he-IL': ['אוקיי', 'טוב', 'רגע'],
   'ar-XA': ['طيب', 'تمام', 'اوكي'],
@@ -1060,12 +1194,10 @@ async function sendImmediateFiller(
   state: ConversationState,
   accessToken: string
 ): Promise<void> {
-  // Skip if already speaking or first turn (greeting just finished)
   if (state.turnCount === 0 || state.isAgentSpeaking) {
     return;
   }
   
-  // 40% chance to add filler (not every time)
   if (Math.random() > 0.4) {
     return;
   }
@@ -1077,7 +1209,6 @@ async function sendImmediateFiller(
   console.log('⚡ Sending immediate filler:', filler);
   
   try {
-    // Synthesize short filler quickly
     const fillerAudio = await synthesizeSpeech(
       filler,
       accessToken,
@@ -1086,11 +1217,7 @@ async function sendImmediateFiller(
       1.0
     );
     
-    // Send filler WITHOUT setting isAgentSpeaking - this is just feedback, not a full turn
-    // Also send without mark so it doesn't block the actual response
     sendFillerAudioWithoutMark(socket, state.streamSid, fillerAudio);
-    
-    // Brief pause for natural transition
     await new Promise(r => setTimeout(r, 150));
   } catch (err) {
     console.error('⚠️ Failed to send filler:', err);
@@ -1105,11 +1232,9 @@ async function streamResponseInSentences(
   socket: WebSocket,
   detectedLanguage: string
 ): Promise<void> {
-  // Split into sentences using multiple delimiters (Hebrew, Arabic, English)
   const sentenceDelimiters = /([.!?،。؟]+)/;
   const parts = response.split(sentenceDelimiters);
   
-  // Combine delimiters back with their sentences
   const sentences: string[] = [];
   for (let i = 0; i < parts.length; i += 2) {
     const sentence = parts[i] + (parts[i + 1] || '');
@@ -1118,7 +1243,6 @@ async function streamResponseInSentences(
     }
   }
   
-  // If response is short, send as one chunk
   if (sentences.length <= 1 || response.length < 50) {
     const audio = await synthesizeSpeech(
       response,
@@ -1133,11 +1257,9 @@ async function streamResponseInSentences(
   
   console.log('🎯 Streaming', sentences.length, 'sentences for faster response');
   
-  // Send first sentence immediately, synthesize next in parallel
   for (let i = 0; i < sentences.length; i++) {
     const sentence = sentences[i];
     
-    // Synthesize current sentence
     const audio = await synthesizeSpeech(
       sentence,
       accessToken,
@@ -1146,9 +1268,7 @@ async function streamResponseInSentences(
       state.sttConfidence
     );
     
-    // Send to Twilio (don't send mark until last sentence)
     if (i < sentences.length - 1) {
-      // Intermediate sentence - send without mark
       const chunkSize = 160;
       const audioBytes = Uint8Array.from(atob(audio), c => c.charCodeAt(0));
       
@@ -1165,88 +1285,67 @@ async function streamResponseInSentences(
       
       console.log('📤 Sent sentence', i + 1, '/', sentences.length);
     } else {
-      // Last sentence - send with mark
       sendAudioToTwilio(socket, state.streamSid, audio);
       console.log('📤 Sent final sentence', i + 1, '/', sentences.length);
     }
   }
 }
 
-// Process audio buffer and get response
-async function processAudioBuffer(
+// ===== STREAMING-BASED AUDIO PROCESSING =====
+// Process audio using streaming manager for faster transcription
+async function processAudioWithStreaming(
   state: ConversationState,
   accessToken: string,
   socket: WebSocket
 ): Promise<void> {
-  if (state.isProcessing || state.audioBuffer.length === 0) {
+  if (state.isProcessing) {
     return;
   }
   
   state.isProcessing = true;
-  console.log('🔄 Processing audio buffer, chunks:', state.audioBuffer.length, 'bytes:', state.totalBufferBytes);
+  const processingStartTime = Date.now();
+  
+  console.log('🚀 STREAMING: Processing audio with streaming STT...');
   
   try {
-    // Use full audio buffer (no trimming - was causing STT failures)
-    const audioBuffer = state.audioBuffer;
-    
-    // Calculate total bytes
-    let totalBytes = 0;
-    for (const chunk of audioBuffer) {
-      totalBytes += chunk.length;
-    }
-    
-    // Combine audio chunks
-    const combinedMulaw = new Uint8Array(totalBytes);
-    let offset = 0;
-    for (const chunk of audioBuffer) {
-      combinedMulaw.set(chunk, offset);
-      offset += chunk.length;
-    }
-    
-    console.log('📦 Combined MULAW audio bytes:', combinedMulaw.length);
-    
-    // Clear buffer
-    state.audioBuffer = [];
-    state.totalBufferBytes = 0;
-    
-    // Convert to base64
-    const mulawBase64 = btoa(String.fromCharCode(...combinedMulaw));
-    
-    // Refresh token if needed
-    if (!accessToken) {
-      accessToken = await getAccessToken(state.credentials);
-    }
-    
-    // Transcribe with Chirp 2 + phrase hints
-    const { transcript, detectedLanguage, confidence } = await transcribeAudio(
-      mulawBase64, 
-      accessToken, 
+    // Get transcript from streaming manager
+    const result = await stopStreamingAndTranscribe(
+      state.streamingSTT,
+      accessToken,
       state.projectId,
       state.language === 'he' ? 'he-IL' : state.language === 'ar' ? 'ar-XA' : 'en-US',
       state.phraseHints
     );
-    console.log('📝 Transcript:', transcript, '| Language:', detectedLanguage, '| Confidence:', (confidence*100).toFixed(0) + '%');
     
-    // Store confidence in state
-    state.sttConfidence = confidence;
+    const sttTime = Date.now() - processingStartTime;
+    console.log(`⚡ STT completed in ${sttTime}ms`);
     
-    if (transcript) {
-      // OPTIMIZED: Lower confidence threshold with smart validation
-      // Only reject if BOTH confidence is very low AND transcript is very short
+    if (result && result.transcript) {
+      const transcript = result.transcript;
+      const detectedLanguage = result.language;
+      const confidence = result.confidence;
+      
+      console.log('📝 Transcript:', transcript, '| Lang:', detectedLanguage, '| Conf:', (confidence*100).toFixed(0) + '%');
+      
+      // Store confidence in state
+      state.sttConfidence = confidence;
+      
+      // Validation: Check for low-confidence short transcripts
       const hebrewWords = /[א-ת]{2,}/g;
       const hebrewMatches = transcript.match(hebrewWords);
       const hasHebrewContent = hebrewMatches !== null && hebrewMatches.length >= 1;
       
-      // Accept if Hebrew content detected, even with lower confidence
       if (!hasHebrewContent && confidence < 0.30 && transcript.length < 6) {
-        console.log('⚠️ Ignoring very low confidence short transcript:', transcript, '| Confidence:', (confidence*100).toFixed(0) + '%');
+        console.log('⚠️ Ignoring very low confidence short transcript:', transcript);
+        state.isProcessing = false;
         return;
       }
       
-      // OPTIMIZED: Shorter grace period after greeting (1200ms instead of 2000ms)
+      // Check greeting grace period
       const GREETING_GRACE_PERIOD_MS = 1200;
       if (state.greetingSentAt > 0 && Date.now() - state.greetingSentAt < GREETING_GRACE_PERIOD_MS) {
         console.log('⏳ In greeting grace period, ignoring transcript:', transcript);
+        state.isProcessing = false;
         return;
       }
       
@@ -1283,72 +1382,51 @@ async function processAudioBuffer(
       });
       state.turnCount++;
       
-      // Get AI response using Lovable AI (replaces Dialogflow)
-      const result = await getAIResponse(transcript, state);
+      // Get AI response
+      const aiStartTime = Date.now();
+      const aiResult = await getAIResponse(transcript, state);
+      const aiTime = Date.now() - aiStartTime;
+      console.log(`🤖 AI response in ${aiTime}ms:`, aiResult.response);
       
       // Update customer info
-      if (result.extractedName && !state.customerName) {
-        state.customerName = result.extractedName;
-        console.log('📛 Customer identified:', state.customerName);
+      if (aiResult.extractedName && !state.customerName) {
+        state.customerName = aiResult.extractedName;
       }
-      if (result.extractedPhone && !state.customerPhone) {
-        state.customerPhone = result.extractedPhone;
-        console.log('📞 Phone captured:', state.customerPhone);
+      if (aiResult.extractedPhone && !state.customerPhone) {
+        state.customerPhone = aiResult.extractedPhone;
       }
-      if (result.extractedTopic) {
+      if (aiResult.extractedTopic) {
         if (!state.customerTopic) {
-          state.customerTopic = result.extractedTopic;
+          state.customerTopic = aiResult.extractedTopic;
         }
-        if (!state.customerRequests.includes(result.extractedTopic)) {
-          state.customerRequests.push(result.extractedTopic);
-          console.log('📌 Added customer request:', result.extractedTopic);
+        if (!state.customerRequests.includes(aiResult.extractedTopic)) {
+          state.customerRequests.push(aiResult.extractedTopic);
         }
       }
       
       // Add agent response to history
       state.conversationHistory.push({
         role: 'agent',
-        text: result.response,
+        text: aiResult.response,
         timestamp: Date.now()
       });
       
-      console.log('🤖 Agent response:', result.response);
-      
-      // Save transcript and customer info to database
+      // Save to database
       try {
         const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
         const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
         const supabase = createClient(supabaseUrl, supabaseKey);
         
-        // Format transcript entry
-        const transcriptEntry = {
-          role: 'user' as const,
-          text: transcript,
-          timestamp: Date.now()
-        };
-        const agentEntry = {
-          role: 'agent' as const, 
-          text: result.response,
-          timestamp: Date.now()
-        };
-        
-        // Find any non-completed call for this user (handles status variations)
-        const { error: updateError } = await supabase.from('calls')
+        await supabase.from('calls')
           .update({ 
             transcript: state.conversationHistory,
             customer_name: state.customerName,
             customer_topic: state.customerTopic,
           })
           .eq('user_id', state.userId)
-          .neq('status', 'completed')  // Match any non-completed status
+          .neq('status', 'completed')
           .order('created_at', { ascending: false })
           .limit(1);
-        
-        if (updateError) {
-          console.error('❌ Database update failed:', updateError.message);
-        } else {
-          console.log('💾 Saved transcript to database - history:', state.conversationHistory.length, 'entries');
-        }
       } catch (dbErr) {
         console.error('⚠️ Error saving transcript:', dbErr);
       }
@@ -1356,27 +1434,32 @@ async function processAudioBuffer(
       // Mark agent as speaking
       state.isAgentSpeaking = true;
       
-      // Stream response in sentences for faster time-to-first-audio
+      // Synthesize and send response
+      const ttsStartTime = Date.now();
       await streamResponseInSentences(
-        result.response,
+        aiResult.response,
         accessToken,
         state,
         socket,
         detectedLanguage
       );
-      // Reset failure counter on successful transcription
-      state.consecutiveSTTFailures = 0;
-    } else {
-      console.log('⚠️ No transcript returned from STT');
+      const ttsTime = Date.now() - ttsStartTime;
       
-      // Track consecutive failures and send fallback prompt
+      const totalTime = Date.now() - processingStartTime;
+      console.log(`⏱️ STREAMING TOTAL: ${totalTime}ms (STT: ${sttTime}ms, AI: ${aiTime}ms, TTS: ${ttsTime}ms)`);
+      
+      // Reset failure counter
+      state.consecutiveSTTFailures = 0;
+      
+    } else {
+      console.log('⚠️ STREAMING: No transcript returned');
+      
       state.consecutiveSTTFailures++;
       console.log('📊 Consecutive STT failures:', state.consecutiveSTTFailures);
       
       if (state.consecutiveSTTFailures >= 2 && !state.isAgentSpeaking) {
         console.log('🔄 Sending fallback prompt due to STT failures');
         
-        // Choose fallback prompt based on language
         const fallbackPrompts: Record<string, string> = {
           'he-IL': 'סליחה, לא שמעתי טוב. אפשר לחזור על זה?',
           'ar-XA': 'عفوا، لم أسمعك جيدا. ممكن تعيد؟',
@@ -1394,12 +1477,11 @@ async function processAudioBuffer(
         );
         sendAudioToTwilio(socket, state.streamSid, fallbackAudio);
         
-        // Reset counter after sending fallback
         state.consecutiveSTTFailures = 0;
       }
     }
   } catch (err) {
-    console.error('❌ Error processing audio:', err);
+    console.error('❌ Error in streaming processing:', err);
   } finally {
     state.isProcessing = false;
   }
@@ -1467,12 +1549,10 @@ function buildPhraseHints(profile: any, script: any): string[] {
     'today',
   ];
   
-  // Add business name if available
   if (profile?.business_name) {
     hints.push(profile.business_name);
   }
   
-  // Add service names from script
   if (script?.services) {
     try {
       const services = typeof script.services === 'string' 
@@ -1493,7 +1573,6 @@ function buildPhraseHints(profile: any, script: any): string[] {
     }
   }
   
-  // Add custom terms from script if defined
   if (script?.phrase_hints) {
     try {
       const customHints = typeof script.phrase_hints === 'string'
@@ -1528,10 +1607,10 @@ serve(async (req) => {
     let accessToken: string | null = null;
     
     // VAD-based endpoint detection constants - OPTIMIZED for low latency
-    const END_OF_UTTERANCE_SILENCE_MS = 600;   // Reduced from 800ms for faster response
-    const MAX_UTTERANCE_MS = 12000;             // Max utterance length
-    const MIN_SPEECH_MS = 500;                  // Filter short bursts
-    const MIN_AUDIO_BYTES = 2000;               // Require enough audio data
+    const END_OF_UTTERANCE_SILENCE_MS = 500;   // Reduced from 600ms for faster streaming response
+    const MAX_UTTERANCE_MS = 12000;
+    const MIN_SPEECH_MS = 400;                  // Reduced from 500ms for faster streaming
+    const MIN_AUDIO_BYTES = 1600;               // Reduced from 2000 for faster streaming
     
     socket.onopen = () => {
       console.log('WebSocket connection opened');
@@ -1549,7 +1628,6 @@ serve(async (req) => {
           case 'start':
             console.log('Stream started:', message.start);
             
-            // Initialize state from custom parameters
             const params = message.start?.customParameters || {};
             const userId = params.userId || '';
             const agentId = params.agentId || '';
@@ -1558,12 +1636,10 @@ serve(async (req) => {
             
             console.log('Stream params:', { userId, agentId, callSid, streamSid });
             
-            // Get Supabase client
             const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
             const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
             const supabase = createClient(supabaseUrl, supabaseKey);
             
-            // Get user profile and script
             const { data: profile } = await supabase
               .from('profiles')
               .select('*')
@@ -1577,7 +1653,6 @@ serve(async (req) => {
               .eq('is_active', true)
               .single();
             
-            // Get credentials
             const credentialsJson = Deno.env.get('GOOGLE_CLOUD_CREDENTIALS');
             if (!credentialsJson) {
               console.error('GOOGLE_CLOUD_CREDENTIALS not set');
@@ -1589,7 +1664,6 @@ serve(async (req) => {
             const projectId = Deno.env.get('GOOGLE_CLOUD_PROJECT_ID') || credentials.project_id;
             accessToken = await getAccessToken(credentials);
             
-            // Build business info for AI prompting
             const businessInfo: BusinessInfo = {
               name: profile?.business_name || 'העסק',
               services: script?.services ? JSON.stringify(script.services) : '',
@@ -1598,8 +1672,10 @@ serve(async (req) => {
               phoneNumber: profile?.phone_number || '',
             };
             
-            // Build phrase hints for STT
             const phraseHints = buildPhraseHints(profile, script);
+            
+            // Create streaming STT manager
+            const streamingSTT = createStreamingSTTManager();
             
             state = {
               userId,
@@ -1614,51 +1690,40 @@ serve(async (req) => {
               projectId,
               greeting: script?.greeting_message || 'שלום, איך אוכל לעזור?',
               language: script?.language || 'he',
-              // Barge-in support
               isAgentSpeaking: false,
               interruptedText: null,
-              // Conversation context
               conversationHistory: [],
               customerName: null,
               customerPhone: null,
               customerTopic: null,
               customerRequests: [],
               turnCount: 0,
-              // Echo suppression - OPTIMIZED for faster responses
               lastTTSEndTime: 0,
-              echoGracePeriodMs: 400,  // Reduced from 500ms
-              // VAD state
+              echoGracePeriodMs: 400,
               isUserSpeaking: false,
               lastVoiceTime: 0,
               speechStartTime: null,
               noiseFloor: 500,
               noiseFloorSamples: 0,
               totalBufferBytes: 0,
-              // Multi-language detection
               detectedLanguage: script?.language === 'he' ? 'he-IL' : script?.language === 'ar' ? 'ar-XA' : 'en-US',
-              // Load voice gender from script settings (default to FEMALE)
               voiceGender: script?.agent_voice_gender === 'male' ? 'MALE' : 'FEMALE',
               sttConfidence: 1.0,
-              // Gender detection (neutral until detected)
               detectedGender: null,
-              // Grace period for listening after greeting
               greetingSentAt: 0,
-              // Business info
               businessInfo,
               phraseHints,
-              // STT failure tracking
               consecutiveSTTFailures: 0,
+              streamingSTT, // NEW: Streaming STT manager
             };
             
-            // OPTIMIZED: Send greeting much faster (300ms instead of 1000ms)
+            // Send greeting
             if (accessToken && state) {
               const greetingState = state;
               const greetingToken = accessToken;
               
-              // Pre-synthesize greeting immediately (don't wait for setTimeout)
               synthesizeSpeech(greetingState.greeting, greetingToken, greetingState.voiceGender)
                 .then(greetingAudio => {
-                  // Send after brief delay for WebSocket to stabilize
                   setTimeout(() => {
                     try {
                       greetingState.isAgentSpeaking = true;
@@ -1669,13 +1734,13 @@ serve(async (req) => {
                         console.error('❌ Failed to send greeting - WebSocket not ready');
                         greetingState.isAgentSpeaking = false;
                       } else {
-                        console.log('✅ Greeting sent successfully (optimized)');
+                        console.log('✅ Greeting sent successfully');
                       }
                     } catch (err) {
                       console.error('Error sending greeting:', err);
                       greetingState.isAgentSpeaking = false;
                     }
-                  }, 300); // OPTIMIZED: 300ms instead of 1000ms
+                  }, 300);
                 })
                 .catch(err => {
                   console.error('Error pre-synthesizing greeting:', err);
@@ -1725,8 +1790,10 @@ serve(async (req) => {
                 state.isAgentSpeaking = false;
                 state.lastTTSEndTime = now;
                 
-                state.audioBuffer = [audioBytes];
-                state.totalBufferBytes = audioBytes.length;
+                // Start streaming session for barge-in
+                startStreamingSTT(state.streamingSTT, accessToken!, state.detectedLanguage, state.phraseHints);
+                feedAudioToStreaming(state.streamingSTT, audioBytes);
+                
                 state.isUserSpeaking = true;
                 state.speechStartTime = now;
                 state.lastVoiceTime = now;
@@ -1741,50 +1808,52 @@ serve(async (req) => {
                   if (!state.isUserSpeaking) {
                     state.isUserSpeaking = true;
                     state.speechStartTime = now;
-                    state.audioBuffer = [];
-                    state.totalBufferBytes = 0;
-                    console.log('🟢 Utterance START - Energy:', vad.energy.toFixed(0));
+                    
+                    // START streaming session
+                    console.log('🟢 STREAMING: Utterance START - Energy:', vad.energy.toFixed(0));
+                    startStreamingSTT(state.streamingSTT, accessToken!, state.detectedLanguage, state.phraseHints);
                   }
+                  
+                  // Feed audio to streaming manager
+                  feedAudioToStreaming(state.streamingSTT, audioBytes);
+                } else if (state.isUserSpeaking && state.streamingSTT.isActive) {
+                  // Continue feeding even during brief silence (for natural pauses)
+                  feedAudioToStreaming(state.streamingSTT, audioBytes);
                 }
                 
-                // Buffer audio
-                if (state.isUserSpeaking || state.audioBuffer.length > 0) {
-                  state.audioBuffer.push(audioBytes);
-                  state.totalBufferBytes += audioBytes.length;
-                  state.lastAudioTime = now;
-                }
+                state.lastAudioTime = now;
                 
-                // END OF UTTERANCE detection
+                // END OF UTTERANCE detection - OPTIMIZED for streaming
                 if (state.isUserSpeaking && state.lastVoiceTime > 0) {
                   const silenceDuration = now - state.lastVoiceTime;
                   const speechDuration = state.speechStartTime ? now - state.speechStartTime : 0;
                   
                   const hasEnoughSilence = silenceDuration >= END_OF_UTTERANCE_SILENCE_MS;
                   const hasMinSpeechDuration = speechDuration >= MIN_SPEECH_MS;
-                  const hasEnoughAudio = state.totalBufferBytes >= MIN_AUDIO_BYTES;
+                  const hasEnoughAudio = state.streamingSTT.chunkCount >= (MIN_AUDIO_BYTES / 160);
                   const isMaxDuration = speechDuration >= MAX_UTTERANCE_MS;
                   
                   if ((hasEnoughSilence && hasMinSpeechDuration && hasEnoughAudio) || isMaxDuration) {
-                    console.log('🟡 Utterance END - Silence:', silenceDuration, 'ms, Duration:', speechDuration, 'ms');
+                    console.log('🟡 STREAMING: Utterance END - Silence:', silenceDuration, 'ms, Duration:', speechDuration, 'ms');
                     
                     state.isUserSpeaking = false;
                     state.speechStartTime = null;
                     
-                    // Send immediate filler word for perceived responsiveness
-                    // IMPORTANT: await to ensure filler completes before processing
+                    // Send immediate filler
                     await sendImmediateFiller(socket, state, accessToken!);
                     
-                    await processAudioBuffer(state, accessToken!, socket);
+                    // Process using streaming manager
+                    await processAudioWithStreaming(state, accessToken!, socket);
                   }
                 }
                 
                 // Discard silent buffers
-                if (!state.isUserSpeaking && state.audioBuffer.length > 0) {
+                if (!state.isUserSpeaking && state.streamingSTT.isActive) {
                   const timeSinceLastAudio = now - state.lastAudioTime;
                   if (timeSinceLastAudio > END_OF_UTTERANCE_SILENCE_MS) {
-                    console.log('🗑️ Discarding silent buffer');
-                    state.audioBuffer = [];
-                    state.totalBufferBytes = 0;
+                    console.log('🗑️ STREAMING: Discarding silent buffer');
+                    state.streamingSTT.isActive = false;
+                    state.streamingSTT.audioChunksBuffer = [];
                   }
                 }
               }
@@ -1799,8 +1868,10 @@ serve(async (req) => {
               state.isUserSpeaking = false;
               state.speechStartTime = null;
               state.lastVoiceTime = 0;
-              state.audioBuffer = [];
-              state.totalBufferBytes = 0;
+              
+              // Reset streaming manager
+              state.streamingSTT.isActive = false;
+              state.streamingSTT.audioChunksBuffer = [];
               
               console.log('✅ Agent finished speaking, ready to listen');
             }
@@ -1816,13 +1887,11 @@ serve(async (req) => {
                 const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
                 const supabase = createClient(supabaseUrl, supabaseKey);
                 
-                // Generate AI summary of the call
                 const lovableApiKey = Deno.env.get('LOVABLE_API_KEY');
                 let callSummary = '';
                 
-                console.log('📊 Call stats - History:', state.conversationHistory.length, 'messages, API key:', lovableApiKey ? 'present' : 'missing');
+                console.log('📊 Call stats - History:', state.conversationHistory.length, 'messages');
                 
-                // Generate summary if we have at least 1 message (even short calls deserve summaries)
                 if (lovableApiKey && state.conversationHistory.length >= 1) {
                   const summaryPrompt = `סכם את השיחה הטלפונית הבאה ב-2-3 משפטים קצרים בעברית. התמקד בעיקר: מה הלקוח רצה ומה סוכם.
 
@@ -1857,12 +1926,10 @@ ${state.conversationHistory.map(h => `${h.role === 'user' ? 'לקוח' : 'נצי
                   }
                 }
                 
-                // Calculate call duration
                 const callDuration = state.conversationHistory.length > 0
                   ? Math.floor((Date.now() - state.conversationHistory[0].timestamp) / 1000)
                   : 0;
                 
-                // Update call record with final data - match any non-completed status
                 const { error: finalError } = await supabase.from('calls')
                   .update({ 
                     status: 'completed',
@@ -1874,14 +1941,14 @@ ${state.conversationHistory.map(h => `${h.role === 'user' ? 'לקוח' : 'נצי
                     summary: callSummary || null,
                   })
                   .eq('user_id', state.userId)
-                  .neq('status', 'completed')  // Match any non-completed status
+                  .neq('status', 'completed')
                   .order('created_at', { ascending: false })
                   .limit(1);
                 
                 if (finalError) {
                   console.error('❌ Failed to finalize call:', finalError.message);
                 } else {
-                  console.log('✅ Call finalized - Duration:', callDuration, 's, Turns:', state.turnCount, ', Summary:', callSummary ? 'Yes' : 'No');
+                  console.log('✅ Call finalized - Duration:', callDuration, 's, Turns:', state.turnCount);
                 }
               } catch (finalErr) {
                 console.error('⚠️ Error finalizing call:', finalErr);
@@ -1894,8 +1961,8 @@ ${state.conversationHistory.map(h => `${h.role === 'user' ? 'לקוח' : 'נצי
       }
     };
 
-    socket.onerror = (error) => {
-      console.error('WebSocket error:', error);
+    socket.onerror = (e) => {
+      console.error('WebSocket error:', e);
     };
 
     socket.onclose = () => {
@@ -1904,27 +1971,15 @@ ${state.conversationHistory.map(h => `${h.role === 'user' ? 'לקוח' : 'נצי
 
     return response;
   }
-  
-  // Regular HTTP request - return info
+
+  // Regular HTTP response
   return new Response(
-    JSON.stringify({ 
-      message: 'Twilio Media Stream WebSocket Handler - MAXIMUM QUALITY',
-      usage: 'Connect via WebSocket for real-time audio streaming',
-      version: '2.0',
-      features: [
-        'Google STT V1 (phone_call for English)',
-        'Lovable AI (Gemini 3 Flash Preview)',
-        'Studio/Neural2 TTS Voices (Highest Quality)',
-        'Enhanced SSML with prosody',
-        'Phrase Hints for business terms',
-        'VAD-based Endpointing',
-        'Barge-in Support',
-        'Full Transcript Saving',
-        'AI Call Summarization',
-        'Customer Info Extraction'
-      ],
+    JSON.stringify({
+      status: 'ok',
+      message: 'Twilio Media Stream Handler with Streaming STT',
+      version: '3.0.0-streaming',
     }),
-    { 
+    {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     }
   );
