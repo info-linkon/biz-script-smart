@@ -278,13 +278,19 @@ async function transcribeAudio(
   }] : [];
   
   // Build config with enhanced model for English only
+  // Add alternative languages for automatic detection of Hebrew, Arabic, and English
+  const alternativeLanguages = ['he-IL', 'ar-XA', 'en-US'].filter(l => l !== primaryLanguage);
+  
   const config: any = {
     encoding: 'MULAW',
     sampleRateHertz: 8000,
     languageCode: primaryLanguage,
+    alternativeLanguageCodes: alternativeLanguages, // Enables Arabic and English detection!
     enableAutomaticPunctuation: true,
     profanityFilter: false,
   };
+  
+  console.log('🌍 STT languages: primary', primaryLanguage, '| alternatives:', alternativeLanguages.join(', '));
   
   // Use enhanced telephony model only for English (phone_call doesn't support Hebrew/Arabic)
   if (primaryLanguage === 'en-US') {
@@ -440,41 +446,55 @@ async function getAIResponse(
 }
 
 // Build system prompt from business info - ISRAELI SPONTANEOUS STYLE
+// Supports both male and female agent voices with appropriate Hebrew grammar
 function buildSystemPrompt(state: ConversationState): string {
-  const { businessInfo, customerName } = state;
+  const { businessInfo, customerName, voiceGender } = state;
   
-  // Determine gender context for natural conversation
-  const genderContext = state.detectedGender === 'male' 
-    ? 'הלקוח גבר - דבר בלשון זכר' 
+  // Agent's own gender - affects how the agent refers to itself
+  const isAgentFemale = voiceGender === 'FEMALE';
+  const agentRole = isAgentFemale ? 'את נציגה של' : 'אתה נציג של';
+  const agentStyle = isAgentFemale 
+    ? 'כמו חברה בטלפון - לא רובוטית, לא קוראת מדף.'
+    : 'כמו חבר בטלפון - לא רובוט, לא קורא מדף.';
+  const agentSpeakStyle = isAgentFemale
+    ? 'דברי כמו ישראלית אמיתית - קצר, חם, ספונטני.'
+    : 'דבר כמו ישראלי אמיתי - קצר, חם, ספונטני.';
+  const agentCheckPhrase = isAgentFemale ? 'רגע אני בודקת' : 'רגע אני בודק';
+  const agentHappyPhrase = isAgentFemale ? 'אשמח לבדוק' : 'אשמח לבדוק';
+  const agentDontKnow = isAgentFemale ? 'תני לי לבדוק ונחזור אלייך' : 'תן לי לבדוק ונחזור אליך';
+  
+  // Customer's gender - affects how agent addresses the customer
+  const customerGenderContext = state.detectedGender === 'male' 
+    ? 'הלקוח גבר - פני אליו בלשון זכר (תשמע, אתה, לך)' 
     : state.detectedGender === 'female'
-    ? 'הלקוחה אישה - דבר בלשון נקבה'
-    : 'לא ברור המגדר - השתמש בניסוח ניטרלי';
+    ? 'הלקוחה אישה - פני אליה בלשון נקבה (תשמעי, את, לך)'
+    : 'לא ברור מגדר הלקוח - השתמשי בניסוח ניטרלי עד שיתברר';
   
-  return `אתה נציג של ${businessInfo.name}. דבר כמו ישראלי אמיתי - קצר, חם, ספונטני.
+  return `${agentRole} ${businessInfo.name}. ${agentSpeakStyle}
 
 ## סגנון הדיבור שלך:
 - משפטים קצרים. מקסימום 10-15 מילים לתשובה.
-- כמו חבר בטלפון - לא רובוט, לא קורא מדף.
+- ${agentStyle}
 - מילות קישור טבעיות: "אוקיי", "יאללה", "רגע", "תשמע/תשמעי", "אין בעיה"
 - תגובות קצרות: "בטח", "כן", "ברור", "מעולה", "סבבה"
-- אל תחזור על מה שהלקוח אמר. תגיב ותתקדם.
+- אל תחזרי על מה שהלקוח אמר. תגיבי ותתקדמי.
 
 ## דוגמאות לסגנון:
-❌ לא: "אני מאוד שמח לעזור לך היום בכל שאלה או בקשה שתהיה לך"
+❌ לא: "אני מאוד ${isAgentFemale ? 'שמחה' : 'שמח'} לעזור לך היום בכל שאלה או בקשה שתהיה לך"
 ✅ כן: "מה קורה? איך אפשר לעזור?"
 
-❌ לא: "בהחלט, אני אשמח לבדוק עבורך את הזמינות ולתאם לך תור מתאים"
-✅ כן: "אוקיי, רגע אני בודק. מתי נוח לך?"
+❌ לא: "בהחלט, ${agentHappyPhrase} עבורך את הזמינות ולתאם לך תור מתאים"
+✅ כן: "אוקיי, ${agentCheckPhrase}. מתי נוח לך?"
 
 ❌ לא: "האם יש משהו נוסף שאוכל לסייע לך בו היום?"
 ✅ כן: "עוד משהו?"
 
 ## כללים:
-1. לעולם לא להגיד שאתה AI/בינה מלאכותית/מודל שפה
-2. ${customerName ? `הלקוח: ${customerName}. תשתמש בשם שלו בטבעיות` : 'תשאל איך קוראים לו אם עוד לא אמר'}
+1. לעולם לא להגיד שאת AI/בינה מלאכותית/מודל שפה
+2. ${customerName ? `הלקוח: ${customerName}. ${isAgentFemale ? 'תשתמשי' : 'תשתמש'} בשם שלו בטבעיות` : isAgentFemale ? 'תשאלי איך קוראים לו אם עוד לא אמר' : 'תשאל איך קוראים לו אם עוד לא אמר'}
 3. תשובות קצרות! זו שיחת טלפון, לא מייל
-4. לא יודע משהו? "תן לי לבדוק ונחזור אליך" - וזהו
-5. ${genderContext}
+4. לא ${isAgentFemale ? 'יודעת' : 'יודע'} משהו? "${agentDontKnow}" - וזהו
+5. ${customerGenderContext}
 6. בלי סמיילים/אימוג'י
 
 ## על העסק:
@@ -719,6 +739,38 @@ function getVoiceForLanguage(
   }
 }
 
+// ===== Hebrew Pronunciation Fixes =====
+// Map problematic words to their nikud (vocalized) versions for better TTS pronunciation
+const hebrewPronunciationFixes: Record<string, string> = {
+  'בכיף': 'בְּכֵיף',
+  'בוקר': 'בּוֹקֶר',
+  'סבבה': 'סַבָּבָה',
+  'אחלה': 'אַחְלָה',
+  'יאללה': 'יַאלְלָה',
+  'בסדר': 'בְּסֵדֶר',
+  'תודה': 'תּוֹדָה',
+  'סליחה': 'סְלִיחָה',
+  'בבקשה': 'בְּבַקָּשָׁה',
+  'נהדר': 'נֶהְדָּר',
+  'מעולה': 'מְעֻלֶּה',
+  'בטח': 'בֶּטַח',
+  'רגע': 'רֶגַע',
+};
+
+// Fix Hebrew pronunciation before sending to TTS
+function fixHebrewPronunciation(text: string): string {
+  let fixedText = text;
+  for (const [word, nikud] of Object.entries(hebrewPronunciationFixes)) {
+    // Replace whole words only (not partial matches)
+    const regex = new RegExp(`\\b${word}\\b`, 'g');
+    fixedText = fixedText.replace(regex, nikud);
+  }
+  if (fixedText !== text) {
+    console.log('🔤 Pronunciation fixes applied:', text, '→', fixedText);
+  }
+  return fixedText;
+}
+
 // ===== SIMPLIFIED: Plain text for TTS to avoid SSML parsing issues =====
 // Removed complex SSML that was being read as text ("480 milliseconds")
 function buildSimpleSSML(text: string): string {
@@ -736,13 +788,17 @@ async function synthesizeSpeech(
 ): Promise<string> {
   console.log('🔊 Synthesizing speech in', detectedLanguage, ':', text);
   
+  // Apply Hebrew pronunciation fixes for better TTS output
+  const isHebrew = detectedLanguage === 'he-IL' || detectedLanguage.startsWith('he');
+  const processedText = isHebrew ? fixHebrewPronunciation(text) : text;
+  
   const voiceConfig = getVoiceForLanguage(detectedLanguage, voiceGender, sttConfidence);
   console.log('🎤 Using voice:', voiceConfig.name, '| STT confidence:', (sttConfidence*100).toFixed(0) + '%');
   
   // Use v1 API with plain text - more reliable than v1beta1 with SSML
   const ttsUrl = 'https://texttospeech.googleapis.com/v1/text:synthesize';
   
-  console.log('📝 TTS input text:', text);
+  console.log('📝 TTS input text:', processedText);
   
   const response = await fetch(ttsUrl, {
     method: 'POST',
@@ -751,7 +807,7 @@ async function synthesizeSpeech(
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      input: { text },  // Plain text - no SSML to avoid parsing issues
+      input: { text: processedText },  // Use pronunciation-fixed text
       voice: {
         languageCode: voiceConfig.languageCode,
         name: voiceConfig.name,
@@ -791,7 +847,7 @@ async function synthesizeSpeech(
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        input: { text },
+        input: { text: processedText },  // Use pronunciation-fixed text in fallback too
         voice: {
           languageCode: voiceConfig.languageCode,
           name: fallbackVoice,
