@@ -92,6 +92,51 @@ export type Database = {
         }
         Relationships: []
       }
+      call_metrics: {
+        Row: {
+          avg_turn_duration_ms: number | null
+          barge_in_count: number | null
+          call_sid: string
+          created_at: string | null
+          end_to_audio_ms: number | null
+          faq_hit_count: number | null
+          id: string
+          languages_detected: string[] | null
+          stt_failures: number | null
+          total_turns: number | null
+          ttfs_ms: number | null
+          user_id: string
+        }
+        Insert: {
+          avg_turn_duration_ms?: number | null
+          barge_in_count?: number | null
+          call_sid: string
+          created_at?: string | null
+          end_to_audio_ms?: number | null
+          faq_hit_count?: number | null
+          id?: string
+          languages_detected?: string[] | null
+          stt_failures?: number | null
+          total_turns?: number | null
+          ttfs_ms?: number | null
+          user_id: string
+        }
+        Update: {
+          avg_turn_duration_ms?: number | null
+          barge_in_count?: number | null
+          call_sid?: string
+          created_at?: string | null
+          end_to_audio_ms?: number | null
+          faq_hit_count?: number | null
+          id?: string
+          languages_detected?: string[] | null
+          stt_failures?: number | null
+          total_turns?: number | null
+          ttfs_ms?: number | null
+          user_id?: string
+        }
+        Relationships: []
+      }
       calls: {
         Row: {
           appointment_scheduled: string | null
