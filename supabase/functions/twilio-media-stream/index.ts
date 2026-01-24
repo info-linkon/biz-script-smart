@@ -1017,6 +1017,127 @@ function sendAudioToTwilio(
   return true;
 }
 
+// Quick filler words for immediate feedback (pre-synthesized for speed)
+const QUICK_FILLERS = {
+  'he-IL': ['אוקיי', 'טוב', 'רגע'],
+  'ar-XA': ['طيب', 'تمام', 'اوكي'],
+  'en-US': ['Okay', 'Right', 'Sure'],
+};
+
+// Send immediate filler word for perceived responsiveness
+async function sendImmediateFiller(
+  socket: WebSocket,
+  state: ConversationState,
+  accessToken: string
+): Promise<void> {
+  // Skip if already speaking or first turn (greeting just finished)
+  if (state.turnCount === 0 || state.isAgentSpeaking) {
+    return;
+  }
+  
+  // 40% chance to add filler (not every time)
+  if (Math.random() > 0.4) {
+    return;
+  }
+  
+  const lang = state.detectedLanguage || 'he-IL';
+  const fillers = QUICK_FILLERS[lang as keyof typeof QUICK_FILLERS] || QUICK_FILLERS['he-IL'];
+  const filler = fillers[Math.floor(Math.random() * fillers.length)];
+  
+  console.log('⚡ Sending immediate filler:', filler);
+  
+  try {
+    // Synthesize short filler quickly
+    const fillerAudio = await synthesizeSpeech(
+      filler,
+      accessToken,
+      state.voiceGender,
+      lang,
+      1.0
+    );
+    
+    state.isAgentSpeaking = true;
+    sendAudioToTwilio(socket, state.streamSid, fillerAudio);
+  } catch (err) {
+    console.error('⚠️ Failed to send filler:', err);
+  }
+}
+
+// Stream response in sentences for faster time-to-first-audio
+async function streamResponseInSentences(
+  response: string,
+  accessToken: string,
+  state: ConversationState,
+  socket: WebSocket,
+  detectedLanguage: string
+): Promise<void> {
+  // Split into sentences using multiple delimiters (Hebrew, Arabic, English)
+  const sentenceDelimiters = /([.!?،。؟]+)/;
+  const parts = response.split(sentenceDelimiters);
+  
+  // Combine delimiters back with their sentences
+  const sentences: string[] = [];
+  for (let i = 0; i < parts.length; i += 2) {
+    const sentence = parts[i] + (parts[i + 1] || '');
+    if (sentence.trim().length > 0) {
+      sentences.push(sentence.trim());
+    }
+  }
+  
+  // If response is short, send as one chunk
+  if (sentences.length <= 1 || response.length < 50) {
+    const audio = await synthesizeSpeech(
+      response,
+      accessToken,
+      state.voiceGender,
+      detectedLanguage,
+      state.sttConfidence
+    );
+    sendAudioToTwilio(socket, state.streamSid, audio);
+    return;
+  }
+  
+  console.log('🎯 Streaming', sentences.length, 'sentences for faster response');
+  
+  // Send first sentence immediately, synthesize next in parallel
+  for (let i = 0; i < sentences.length; i++) {
+    const sentence = sentences[i];
+    
+    // Synthesize current sentence
+    const audio = await synthesizeSpeech(
+      sentence,
+      accessToken,
+      state.voiceGender,
+      detectedLanguage,
+      state.sttConfidence
+    );
+    
+    // Send to Twilio (don't send mark until last sentence)
+    if (i < sentences.length - 1) {
+      // Intermediate sentence - send without mark
+      const chunkSize = 160;
+      const audioBytes = Uint8Array.from(atob(audio), c => c.charCodeAt(0));
+      
+      for (let j = 0; j < audioBytes.length; j += chunkSize) {
+        const chunk = audioBytes.slice(j, Math.min(j + chunkSize, audioBytes.length));
+        const chunkBase64 = btoa(String.fromCharCode(...chunk));
+        
+        socket.send(JSON.stringify({
+          event: 'media',
+          streamSid: state.streamSid,
+          media: { payload: chunkBase64 },
+        }));
+      }
+      
+      console.log('📤 Sent sentence', i + 1, '/', sentences.length);
+    } else {
+      // Last sentence - send with mark
+      sendAudioToTwilio(socket, state.streamSid, audio);
+      console.log('📤 Sent final sentence', i + 1, '/', sentences.length);
+    }
+  }
+}
+
 // Process audio buffer and get response
 async function processAudioBuffer(
   state: ConversationState,
@@ -1201,15 +1322,14 @@ async function processAudioBuffer(
       // Mark agent as speaking
       state.isAgentSpeaking = true;
       
-      // Synthesize and send response
-      const responseAudio = await synthesizeSpeech(
-        result.response, 
-        accessToken, 
-        state.voiceGender,
-        detectedLanguage,
-        state.sttConfidence
+      // Stream response in sentences for faster time-to-first-audio
+      await streamResponseInSentences(
+        result.response,
+        accessToken,
+        state,
+        socket,
+        detectedLanguage
       );
-      sendAudioToTwilio(socket, state.streamSid, responseAudio);
       // Reset failure counter on successful transcription
       state.consecutiveSTTFailures = 0;
     } else {
@@ -1374,7 +1494,7 @@ serve(async (req) => {
     let accessToken: string | null = null;
     
     // VAD-based endpoint detection constants - OPTIMIZED for low latency
-    const END_OF_UTTERANCE_SILENCE_MS = 800;   // Reduced from 1200ms for faster response
+    const END_OF_UTTERANCE_SILENCE_MS = 600;   // Reduced from 800ms for faster response
     const MAX_UTTERANCE_MS = 12000;             // Max utterance length
     const MIN_SPEECH_MS = 500;                  // Filter short bursts
     const MIN_AUDIO_BYTES = 2000;               // Require enough audio data
@@ -1472,7 +1592,7 @@ serve(async (req) => {
               turnCount: 0,
               // Echo suppression - OPTIMIZED for faster responses
               lastTTSEndTime: 0,
-              echoGracePeriodMs: 500,  // Reduced from 800ms
+              echoGracePeriodMs: 400,  // Reduced from 500ms
               // VAD state
               isUserSpeaking: false,
               lastVoiceTime: 0,
@@ -1615,6 +1735,9 @@ serve(async (req) => {
                     
                     state.isUserSpeaking = false;
                     state.speechStartTime = null;
+                    
+                    // Send immediate filler word for perceived responsiveness
+                    sendImmediateFiller(socket, state, accessToken!);
                     
                     await processAudioBuffer(state, accessToken!, socket);
                   }
