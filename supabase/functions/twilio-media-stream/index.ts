@@ -514,42 +514,64 @@ function cleanAIResponse(response: string): string {
   return response;
 }
 
-// Get voice configuration based on detected language - UPGRADED to Studio voices
+// Get voice configuration based on detected language - UPGRADED to Chirp 3 HD (best quality!)
 function getVoiceForLanguage(
   detectedLanguage: string, 
   voiceGender: 'FEMALE' | 'MALE',
   sttConfidence: number = 1.0
 ): { languageCode: string; name: string } {
   
+  // Chirp 3 HD voices - Google's highest quality multilingual voices
+  const chirp3Voices = {
+    hebrew: {
+      FEMALE: 'he-IL-Chirp3-HD-Aoede',   // Warm, natural female
+      MALE: 'he-IL-Chirp3-HD-Charon'     // Deep, professional male
+    },
+    arabic: {
+      FEMALE: 'ar-XA-Chirp3-HD-Aoede',
+      MALE: 'ar-XA-Chirp3-HD-Charon'
+    },
+    english: {
+      FEMALE: 'en-US-Chirp3-HD-Aoede',
+      MALE: 'en-US-Chirp3-HD-Charon'
+    }
+  };
+  
+  // Fallback to Wavenet if Chirp 3 not available
+  const wavenetFallback = {
+    hebrew: { FEMALE: 'he-IL-Wavenet-A', MALE: 'he-IL-Wavenet-B' },
+    arabic: { FEMALE: 'ar-XA-Wavenet-A', MALE: 'ar-XA-Wavenet-B' },
+    english: { FEMALE: 'en-US-Neural2-F', MALE: 'en-US-Neural2-D' }
+  };
+  
   // If low confidence - always use Hebrew voice
   if (sttConfidence < 0.5 || !detectedLanguage) {
-    console.log('🎤 Low confidence or no language, using Hebrew Wavenet voice');
+    console.log('🎤 Low confidence or no language, using Hebrew Chirp3-HD voice');
     return { 
       languageCode: 'he-IL', 
-      // Wavenet voices for Hebrew (Studio not available in all projects)
-      name: voiceGender === 'FEMALE' ? 'he-IL-Wavenet-A' : 'he-IL-Wavenet-B' 
+      name: chirp3Voices.hebrew[voiceGender]
     };
   }
   
   const lang = detectedLanguage.toLowerCase();
   
   if (lang.startsWith('en')) {
+    console.log('🎤 Using English Chirp3-HD voice');
     return { 
       languageCode: 'en-US', 
-      // Neural2 voices are highest quality for English
-      name: voiceGender === 'FEMALE' ? 'en-US-Neural2-F' : 'en-US-Neural2-D' 
+      name: chirp3Voices.english[voiceGender]
     };
   } else if (lang.startsWith('ar')) {
+    console.log('🎤 Using Arabic Chirp3-HD voice');
     return { 
       languageCode: 'ar-XA', 
-      // Wavenet for Arabic (Studio not available)
-      name: voiceGender === 'FEMALE' ? 'ar-XA-Wavenet-A' : 'ar-XA-Wavenet-B' 
+      name: chirp3Voices.arabic[voiceGender]
     };
   } else {
+    console.log('🎤 Using Hebrew Chirp3-HD voice');
     return { 
       languageCode: 'he-IL', 
-      // Wavenet voices for Hebrew (Studio not available in all projects)
-      name: voiceGender === 'FEMALE' ? 'he-IL-Wavenet-A' : 'he-IL-Wavenet-B' 
+      name: chirp3Voices.hebrew[voiceGender]
     };
   }
 }
@@ -595,20 +617,20 @@ async function synthesizeSpeech(
         audioEncoding: 'MULAW',
         sampleRateHertz: 8000,
         effectsProfileId: ['telephony-class-application'],
-        speakingRate: 1.05,  // OPTIMIZED: Faster, more natural speech
-        pitch: 0.5,          // Slightly higher pitch for warmth
+        speakingRate: 1.0,   // Natural speaking rate for Chirp 3
+        pitch: 0.3,          // Warm, natural tone
       },
     }),
   });
 
   const data = await response.json();
   
-  // Fallback to Wavenet if Studio not available
+  // Fallback to Wavenet if Chirp 3 HD not available
   if (data.error) {
-    console.log('⚠️ Studio voice not available, falling back to Wavenet:', data.error.message);
+    console.log('⚠️ Chirp3-HD voice not available, falling back to Wavenet:', data.error.message);
     
     const fallbackVoice = detectedLanguage.startsWith('en') 
-      ? 'en-US-Wavenet-F' 
+      ? 'en-US-Neural2-F' 
       : detectedLanguage.startsWith('ar')
         ? 'ar-XA-Wavenet-A'
         : 'he-IL-Wavenet-A';
@@ -620,7 +642,7 @@ async function synthesizeSpeech(
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        input: { text },  // Use plain text for fallback
+        input: { text },
         voice: {
           languageCode: voiceConfig.languageCode,
           name: fallbackVoice,
@@ -629,6 +651,8 @@ async function synthesizeSpeech(
           audioEncoding: 'MULAW',
           sampleRateHertz: 8000,
           effectsProfileId: ['telephony-class-application'],
+          speakingRate: 1.0,
+          pitch: 0.3,
         },
       }),
     });
