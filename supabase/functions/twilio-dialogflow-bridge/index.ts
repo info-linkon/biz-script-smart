@@ -1,16 +1,61 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-// This bridge now supports TWO modes:
-// 1. Real-time Streaming (via WebSocket Media Streams) - for natural conversation
-// 2. Record-based (via process-recording) - fallback for debugging
-
-const USE_STREAMING = true; // Set to false to use Record-based flow
-
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
+
+/**
+ * UTF-8 safe base64url encoding
+ */
+function stringToBase64url(str: string): string {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(str);
+  const base64 = btoa(String.fromCharCode(...data));
+  return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+}
+
+/**
+ * Generate HMAC-SHA256 signature using Web Crypto API
+ */
+async function sign(data: string, secret: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    'raw',
+    encoder.encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
+  const signature = await crypto.subtle.sign('HMAC', key, encoder.encode(data));
+  const base64 = btoa(String.fromCharCode(...new Uint8Array(signature)));
+  return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+}
+
+/**
+ * Generate a session token for Media Bridge authentication
+ */
+async function generateSessionToken(
+  userId: string,
+  agentId: string,
+  callSid: string,
+  secret: string,
+  expiryMs: number = 5 * 60 * 1000 // 5 minutes default
+): Promise<string> {
+  const payload = {
+    userId,
+    agentId,
+    callSid,
+    exp: Date.now() + expiryMs,
+    jti: `${Date.now()}-${crypto.randomUUID().substring(0, 8)}`
+  };
+
+  const payloadB64 = stringToBase64url(JSON.stringify(payload));
+  const signature = await sign(payloadB64, secret);
+
+  return `${payloadB64}.${signature}`;
+}
 
 // This function handles incoming Twilio calls and bridges them to Dialogflow CX
 serve(async (req) => {
@@ -22,6 +67,8 @@ serve(async (req) => {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const projectId = Deno.env.get('GOOGLE_CLOUD_PROJECT_ID');
+    const mediaBridgeUrl = Deno.env.get('MEDIA_BRIDGE_URL');
+    const mediaBridgeSecret = Deno.env.get('MEDIA_BRIDGE_SECRET') || '';
     
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
@@ -76,57 +123,61 @@ serve(async (req) => {
                       'Google.en-US-Wavenet-D';
     const langCode = language === 'he' ? 'he-IL' : language === 'ar' ? 'ar-XA' : 'en-US';
 
-    // If this is the initial call (no speech result), greet and start conversation
+    // If this is the initial call (no speech result), start the call
     if (!speechResult) {
       const greeting = script?.greeting_message || 
         (language === 'he' ? `שלום, הגעת ל${profile?.business_name || 'העסק'}. איך אוכל לעזור לך?` :
          language === 'ar' ? `مرحبا، وصلت إلى ${profile?.business_name || 'العمل'}. كيف يمكنني مساعدتك؟` :
          `Hello, you've reached ${profile?.business_name || 'our business'}. How can I help you?`);
 
-      // Note: Call record is created by twilio-media-stream to avoid duplicates
       console.log(`[BRIDGE] Call initiated for user ${userId} from ${from}`);
 
-      let twiml: string;
-      
-      if (USE_STREAMING) {
-        // Real-time streaming mode - uses WebSocket for natural conversation
-        // The greeting will be sent via WebSocket, but we say a brief intro first
-        const streamUrl = `wss://${supabaseUrl.replace('https://', '')}/functions/v1/twilio-media-stream`;
-        
-        // <Connect><Stream> is bidirectional by default
-        // Audio can be sent back through the same WebSocket using media events
-        twiml = `<?xml version="1.0" encoding="UTF-8"?>
+      // Generate session token for Media Bridge authentication
+      const agentId = profile?.dialogflow_agent_id || '';
+      const sessionToken = await generateSessionToken(
+        userId,
+        agentId,
+        callSid,
+        mediaBridgeSecret
+      );
+
+      // Build stream URL - use Media Bridge if configured, otherwise fallback to Edge Function
+      let streamUrl: string;
+      if (mediaBridgeUrl) {
+        // Connect directly to Media Bridge on Cloud Run
+        streamUrl = mediaBridgeUrl.replace('https://', 'wss://');
+      } else {
+        // Fallback to Edge Function (limited to 60s)
+        streamUrl = `wss://${supabaseUrl.replace('https://', '')}/functions/v1/twilio-media-stream`;
+      }
+
+      // TwiML with sessionToken in customParameters for secure authentication
+      const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Connect>
     <Stream url="${streamUrl}">
+      <Parameter name="sessionToken" value="${sessionToken}" />
       <Parameter name="userId" value="${userId}" />
-      <Parameter name="agentId" value="${profile?.dialogflow_agent_id || ''}" />
-      <Parameter name="language" value="${language}" />
+      <Parameter name="agentId" value="${agentId}" />
+      <Parameter name="language" value="${langCode}" />
       <Parameter name="greeting" value="${encodeURIComponent(greeting)}" />
     </Stream>
   </Connect>
 </Response>`;
-        
-        console.log('📄 TwiML Response being sent:', twiml);
-      } else {
-        // Record-based mode - uses process-recording for Hebrew/Arabic recognition
-        twiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say language="${langCode}" voice="${voiceName}">${greeting}</Say>
-  <Record maxLength="15" playBeep="true" timeout="2" 
-    action="${supabaseUrl}/functions/v1/process-recording" 
-    recordingStatusCallback="${supabaseUrl}/functions/v1/process-recording"/>
-  <Say language="${langCode}" voice="${voiceName}">${language === 'he' ? 'לא שמעתי אותך. להתראות!' : 'I didn\'t hear you. Goodbye!'}</Say>
-</Response>`;
-      }
+      
+      console.log('📄 TwiML Response (token generated):', { 
+        streamUrl, 
+        hasToken: !!sessionToken,
+        userId,
+        agentId: agentId.substring(0, 10) + '...'
+      });
       
       return new Response(twiml, { 
         headers: { ...corsHeaders, 'Content-Type': 'text/xml' } 
       });
     }
 
-    // Process speech with Dialogflow CX (simplified - using detect intent)
-    // For full implementation, you'd use the Dialogflow CX streaming API
+    // Process speech with Dialogflow CX (for non-streaming fallback)
     const credentialsJson = Deno.env.get('GOOGLE_CLOUD_CREDENTIALS');
     if (!credentialsJson || !projectId || !profile?.dialogflow_agent_id) {
       const twiml = `<?xml version="1.0" encoding="UTF-8"?>

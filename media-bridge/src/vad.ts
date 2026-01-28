@@ -15,6 +15,7 @@ interface VADConfig {
   silenceFrames: number;
   speechFrames: number;
   frameSize: number;
+  frameTimeMs: number;  // Time per frame in milliseconds
 }
 
 export class VADProcessor {
@@ -30,7 +31,8 @@ export class VADProcessor {
       energyThreshold: config.energyThreshold || 0.02,
       silenceFrames: config.silenceFrames || 15, // ~300ms at 20ms frames
       speechFrames: config.speechFrames || 3,    // ~60ms to start
-      frameSize: config.frameSize || 160         // 20ms at 8kHz
+      frameSize: config.frameSize || 160,         // 20ms at 8kHz
+      frameTimeMs: config.frameTimeMs || 20       // 20ms per frame
     };
     this.adaptiveThreshold = this.config.energyThreshold;
   }
@@ -116,6 +118,43 @@ export class VADProcessor {
         noiseFloor * 2.5
       );
     }
+  }
+
+  /**
+   * Get the current silent time in milliseconds
+   */
+  getSilentMs(): number {
+    return this.silentFrameCount * this.config.frameTimeMs;
+  }
+
+  /**
+   * Get the current silent frame count
+   */
+  getSilentFrameCount(): number {
+    return this.silentFrameCount;
+  }
+
+  /**
+   * Get full debug state for logging
+   */
+  debugState(): {
+    isSpeaking: boolean;
+    silentMs: number;
+    silentFrames: number;
+    speechFrames: number;
+    adaptiveThreshold: number;
+    historyLength: number;
+    lastEnergy: number;
+  } {
+    return {
+      isSpeaking: this.isSpeaking,
+      silentMs: this.getSilentMs(),
+      silentFrames: this.silentFrameCount,
+      speechFrames: this.speechFrameCount,
+      adaptiveThreshold: this.adaptiveThreshold,
+      historyLength: this.frameHistory.length,
+      lastEnergy: this.frameHistory[this.frameHistory.length - 1] || 0
+    };
   }
 
   reset() {
