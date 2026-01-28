@@ -4,8 +4,9 @@ FROM node:20-alpine AS builder
 WORKDIR /app
 
 # Copy package files
-COPY package*.json ./
-RUN npm ci
+COPY package.json ./
+# NOTE: repo doesn't include a package-lock.json, so npm ci would fail.
+RUN npm install --no-audit --no-fund
 
 # Copy source code
 COPY tsconfig.json ./
@@ -20,8 +21,8 @@ FROM node:20-alpine AS production
 WORKDIR /app
 
 # Install production dependencies only
-COPY package*.json ./
-RUN npm ci --only=production && npm cache clean --force
+COPY package.json ./
+RUN npm install --omit=dev --no-audit --no-fund && npm cache clean --force
 
 # Copy built files
 COPY --from=builder /app/dist ./dist
