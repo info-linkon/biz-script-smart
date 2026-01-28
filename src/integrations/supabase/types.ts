@@ -92,6 +92,33 @@ export type Database = {
         }
         Relationships: []
       }
+      billing_alerts: {
+        Row: {
+          alert_type: string
+          created_at: string | null
+          id: string
+          is_read: boolean | null
+          message: string
+          user_id: string
+        }
+        Insert: {
+          alert_type: string
+          created_at?: string | null
+          id?: string
+          is_read?: boolean | null
+          message: string
+          user_id: string
+        }
+        Update: {
+          alert_type?: string
+          created_at?: string | null
+          id?: string
+          is_read?: boolean | null
+          message?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       call_metrics: {
         Row: {
           avg_turn_duration_ms: number | null
@@ -315,6 +342,36 @@ export type Database = {
           },
         ]
       }
+      rate_limit_events: {
+        Row: {
+          agent_id: string | null
+          created_at: string | null
+          id: string
+          ip_address: string | null
+          limit_type: string
+          operation_type: string
+          user_id: string | null
+        }
+        Insert: {
+          agent_id?: string | null
+          created_at?: string | null
+          id?: string
+          ip_address?: string | null
+          limit_type: string
+          operation_type: string
+          user_id?: string | null
+        }
+        Update: {
+          agent_id?: string | null
+          created_at?: string | null
+          id?: string
+          ip_address?: string | null
+          limit_type?: string
+          operation_type?: string
+          user_id?: string | null
+        }
+        Relationships: []
+      }
       scripts: {
         Row: {
           agent_voice_gender: string | null
@@ -453,6 +510,42 @@ export type Database = {
         }
         Relationships: []
       }
+      system_health: {
+        Row: {
+          active_calls: number | null
+          avg_end_to_audio_ms: number | null
+          avg_ttfs_ms: number | null
+          circuit_breaker_status: Json | null
+          error_count: number | null
+          id: string
+          stt_success_rate: number | null
+          timestamp: string | null
+          tts_success_rate: number | null
+        }
+        Insert: {
+          active_calls?: number | null
+          avg_end_to_audio_ms?: number | null
+          avg_ttfs_ms?: number | null
+          circuit_breaker_status?: Json | null
+          error_count?: number | null
+          id?: string
+          stt_success_rate?: number | null
+          timestamp?: string | null
+          tts_success_rate?: number | null
+        }
+        Update: {
+          active_calls?: number | null
+          avg_end_to_audio_ms?: number | null
+          avg_ttfs_ms?: number | null
+          circuit_breaker_status?: Json | null
+          error_count?: number | null
+          id?: string
+          stt_success_rate?: number | null
+          timestamp?: string | null
+          tts_success_rate?: number | null
+        }
+        Relationships: []
+      }
       usage_stats: {
         Row: {
           appointments_count: number
@@ -506,6 +599,7 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      cleanup_old_rate_limit_events: { Args: never; Returns: undefined }
       get_users_with_email: {
         Args: never
         Returns: {
