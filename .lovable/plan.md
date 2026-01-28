@@ -8,14 +8,18 @@
 
 | Gate | סטטוס | הערות |
 |------|-------|-------|
-| Token validation מ-customParameters | ✅ מיושם | session.ts שורות 182-220 |
-| Media drop לפני validation | ✅ מיושם | session.ts שורות 152-159 |
-| Replay Protection (JTI) | ✅ מיושם | auth.ts שורות 102-108 |
+| Token validation מ-customParameters | ✅ מיושם | session.ts |
+| Media drop לפני validation | ✅ מיושם | session.ts |
+| Replay Protection (JTI) | ✅ מיושם | auth.ts |
 | UTF-8 safe encoding | ✅ מיושם | Buffer.from('utf-8') |
-| STT Deduplication | ✅ מיושם | session.ts שורות 385-392 |
+| STT Deduplication | ✅ מיושם | session.ts |
 | Circuit Breaker | ✅ מיושם | circuit-breaker.ts |
-| Heartbeat בסיסי | ✅ מיושם | 5 דקות timeout |
-| recordWSClose עם context | ✅ חלקי | חסרים שדות |
+| Heartbeat דינמי | ✅ מיושם | 90s/120s/180s לפי state |
+| sessionState tracking | ✅ מיושם | idle/awaiting_user/agent_speaking/processing |
+| lastActivityType | ✅ מיושם | media_in/stt_result/tts_sent/dialogflow |
+| isQuestionText | ✅ מיושם | Hebrew/Arabic question detection |
+| recordWSClose עם JSON מלא | ✅ מיושם | כל הקונטקסט כולל metrics |
+| Startup logging | ✅ מיושם | ENV/LOG_LEVEL/PORT/secrets |
 
 ---
 

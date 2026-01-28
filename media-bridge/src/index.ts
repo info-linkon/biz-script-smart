@@ -7,6 +7,8 @@ import { getCircuitStatus, getActiveJtiCount } from './auth';
 const PORT = parseInt(process.env.PORT || '8080', 10);
 const API_SECRET = process.env.MEDIA_BRIDGE_SECRET || '';
 const DEV_TOKEN = process.env.DEV_TOKEN || '';
+const NODE_ENV = process.env.NODE_ENV || 'development';
+const LOG_LEVEL = process.env.LOG_LEVEL || 'info';
 
 // Store active sessions
 const sessions = new Map<string, MediaBridgeSession>();
@@ -129,10 +131,14 @@ process.on('SIGINT', shutdown);
 
 // Start server
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`Media Bridge listening on port ${PORT}`);
-  console.log(`Health check: http://localhost:${PORT}/health`);
-  console.log(`API Secret configured: ${API_SECRET ? 'Yes' : 'No'}`);
+  console.log(`=== Media Bridge Starting ===`);
+  console.log(`Environment: ${NODE_ENV}`);
+  console.log(`Log level: ${LOG_LEVEL}`);
+  console.log(`Port: ${PORT}`);
+  console.log(`API Secret configured: ${API_SECRET ? 'Yes' : 'No (WARNING: dev mode)'}`);
   console.log(`Dev Token configured: ${DEV_TOKEN ? 'Yes' : 'No'}`);
+  console.log(`Health check: http://localhost:${PORT}/health`);
+  console.log(`=============================`);
 });
 
 // Export for re-use in auth.ts
