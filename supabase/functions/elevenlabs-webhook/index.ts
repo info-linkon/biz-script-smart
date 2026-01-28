@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { checkTenantRateLimit, createRateLimitResponse, getRateLimitHeaders } from "../_shared/tenant-rate-limiter.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -51,8 +52,27 @@ serve(async (req) => {
     const userId = phoneRecord.user_id;
     const profile = phoneRecord.profiles;
 
+    // Rate limiting for webhooks
+    const ip = req.headers.get('x-forwarded-for')?.split(',')[0] || 
+               req.headers.get('x-real-ip') || 
+               'unknown';
+    
+    const rateLimitResult = await checkTenantRateLimit(
+      supabase,
+      userId,
+      null,
+      ip,
+      'webhook'
+    );
+
+    if (!rateLimitResult.allowed) {
+      console.log(`[elevenlabs-webhook] Rate limited: userId=${userId}, limitType=${rateLimitResult.limitType}`);
+      const rateLimitHeaders = getRateLimitHeaders(rateLimitResult);
+      return createRateLimitResponse('he', { ...corsHeaders, ...rateLimitHeaders });
+    }
+
     // Get the active script for this user
-    const { data: script, error: scriptError } = await supabase
+    const { data: script } = await supabase
       .from('scripts')
       .select('*')
       .eq('user_id', userId)
@@ -60,7 +80,7 @@ serve(async (req) => {
       .single();
 
     // Get user's availability
-    const { data: availability, error: availError } = await supabase
+    const { data: availability } = await supabase
       .from('availability')
       .select('*')
       .eq('user_id', userId)

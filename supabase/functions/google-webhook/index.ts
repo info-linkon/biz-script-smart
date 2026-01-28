@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { checkTenantRateLimit, createRateLimitResponse, getRateLimitHeaders } from "../_shared/tenant-rate-limiter.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -22,14 +23,31 @@ serve(async (req) => {
     // Extract user ID from header (set when creating webhook)
     const userId = req.headers.get('x-agent-user-id');
     
+    // Rate limiting for webhooks
+    if (userId) {
+      const ip = req.headers.get('x-forwarded-for')?.split(',')[0] || 
+                 req.headers.get('x-real-ip') || 
+                 'unknown';
+      
+      const rateLimitResult = await checkTenantRateLimit(
+        supabase,
+        userId,
+        null,
+        ip,
+        'webhook'
+      );
+
+      if (!rateLimitResult.allowed) {
+        console.log(`[google-webhook] Rate limited: userId=${userId}, limitType=${rateLimitResult.limitType}`);
+        const rateLimitHeaders = getRateLimitHeaders(rateLimitResult);
+        return createRateLimitResponse('he', { ...corsHeaders, ...rateLimitHeaders });
+      }
+    }
+    
     // Dialogflow CX webhook format
     const { 
       fulfillmentInfo,
       sessionInfo,
-      messages,
-      payload,
-      intentInfo,
-      pageInfo,
       languageCode
     } = body;
 
@@ -144,9 +162,6 @@ serve(async (req) => {
         }
 
         // Get availability for next 7 days
-        const today = new Date();
-        const dayOfWeek = today.getDay();
-
         const { data: availability, error: availError } = await supabase
           .from('availability')
           .select('*')
