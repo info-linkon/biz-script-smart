@@ -57,6 +57,11 @@ export class MediaBridgeSession extends EventEmitter {
   private lastTranscript: string = '';
   private sessionActive: boolean = true;
   
+  // Session State Tracking
+  private sessionState: 'idle' | 'awaiting_user' | 'agent_speaking' | 'processing' = 'idle';
+  private lastActivityType: 'none' | 'media_in' | 'stt_result' | 'tts_sent' | 'dialogflow' = 'none';
+  private sessionActive: boolean = true;
+  
   // Security
   private validated: boolean = false;
   private apiSecret: string;
@@ -109,17 +114,22 @@ export class MediaBridgeSession extends EventEmitter {
   }
 
   private startHeartbeat() {
-    // Smart heartbeat - only log if there's been activity
+    // Smart heartbeat with dynamic timeouts based on session state
     this.heartbeatTimer = setInterval(() => {
       const idleTime = Date.now() - this.lastActivityTime;
       
+      // Dynamic timeout based on state
+      const timeout = this.sessionState === 'awaiting_user' ? 120000 : 
+                      this.sessionState === 'agent_speaking' ? 180000 : 90000;
+      
       if (idleTime > 60000) { // 1 minute idle
-        console.log(`[${this.sessionId}] Session idle for ${Math.round(idleTime / 1000)}s`);
+        console.log(`[${this.sessionId}] Session idle for ${Math.round(idleTime / 1000)}s, state: ${this.sessionState}`);
       }
       
-      // Close sessions that are idle for too long (5 minutes)
-      if (idleTime > 300000) {
-        console.log(`[${this.sessionId}] Session timed out due to inactivity`);
+      // Close sessions that exceed their state-based timeout
+      if (idleTime > timeout) {
+        console.log(`[${this.sessionId}] Session timed out: state=${this.sessionState}, idle=${Math.round(idleTime/1000)}s, timeout=${timeout/1000}s`);
+        this.ws.close(4000, 'connection_stale');
         this.cleanup();
         this.emit('end');
       }
@@ -128,8 +138,9 @@ export class MediaBridgeSession extends EventEmitter {
     this.heartbeatTimer.unref();
   }
 
-  private updateActivity() {
+  private updateActivity(type: 'media_in' | 'stt_result' | 'tts_sent' | 'dialogflow' = 'media_in') {
     this.lastActivityTime = Date.now();
+    this.lastActivityType = type;
   }
 
   private async handleMessage(message: TwilioMediaMessage) {
@@ -342,6 +353,7 @@ export class MediaBridgeSession extends EventEmitter {
   }
 
   private async handleAudio(base64Audio: string) {
+    this.updateActivity('media_in');
     const audioBytes = Buffer.from(base64Audio, 'base64');
     
     // Process VAD
@@ -352,6 +364,7 @@ export class MediaBridgeSession extends EventEmitter {
       console.log(`[${this.sessionId}] Barge-in detected!`);
       this.metrics.bargeInCount++;
       this.isAgentSpeaking = false;
+      this.sessionState = 'idle';
       this.pendingAudioChunks = [];
       this.clearTwilioAudio();
     }
@@ -398,6 +411,8 @@ export class MediaBridgeSession extends EventEmitter {
     }
 
     console.log(`[${this.sessionId}] Final: "${transcript}" (${(confidence * 100).toFixed(1)}%)`);
+    this.updateActivity('stt_result');
+    this.sessionState = 'processing';
     this.lastTranscript = transcript;
     this.turnsCount++;
     this.metrics.totalTurns++;
@@ -496,6 +511,7 @@ export class MediaBridgeSession extends EventEmitter {
     }
 
     const startTime = Date.now();
+    this.sessionState = 'agent_speaking';
     this.isAgentSpeaking = true;
 
     try {
@@ -516,12 +532,28 @@ export class MediaBridgeSession extends EventEmitter {
       }
 
       this.metrics.endToAudioMs = Date.now() - startTime;
+      this.updateActivity('tts_sent');
     } catch (error) {
       console.error(`[${this.sessionId}] TTS error:`, error);
       recordFailure('google-tts');
     } finally {
       this.isAgentSpeaking = false;
+      // Check if this was a question - set state accordingly
+      this.sessionState = this.isQuestionText(text) ? 'awaiting_user' : 'idle';
     }
+  }
+
+  /**
+   * Detect if text is a question (for timeout logic)
+   */
+  private isQuestionText(text: string): boolean {
+    const questionPatterns = [
+      /\?$/,                              // Ends with ?
+      /؟$/,                               // Arabic question mark
+      /^(מה|איך|למה|מתי|איפה|האם|האם)/,  // Hebrew question words
+      /^(ما|كيف|لماذا|متى|أين|هل)/,       // Arabic question words
+    ];
+    return questionPatterns.some(p => p.test(text.trim()));
   }
 
   private async synthesizeSpeech(text: string): Promise<Buffer | null> {
@@ -616,12 +648,24 @@ export class MediaBridgeSession extends EventEmitter {
   }
 
   /**
-   * Record WebSocket close event with full context
+   * Record WebSocket close event with full context for debugging
    */
   recordWSClose(code: number, reason: string) {
-    console.log(`[${this.sessionId}] WS Close recorded - Code: ${code}, Reason: ${reason}, ` +
-      `Validated: ${this.validated}, Turns: ${this.turnsCount}, ` +
-      `Duration: ${this.getDuration()}ms, MediaDropped: ${this.mediaPacketsBeforeValidation}`);
+    const lastActivityAgoMs = Date.now() - this.lastActivityTime;
+    
+    console.log(`[${this.sessionId}] WS Close Context:`, JSON.stringify({
+      code,
+      reason,
+      validated: this.validated,
+      sessionState: this.sessionState,
+      isAgentSpeaking: this.isAgentSpeaking,
+      lastActivityType: this.lastActivityType,
+      lastActivityAgoMs,
+      turnsCount: this.turnsCount,
+      durationMs: this.getDuration(),
+      mediaDroppedBeforeValidation: this.mediaPacketsBeforeValidation,
+      metrics: this.metrics
+    }));
   }
 
   cleanup() {
