@@ -13,7 +13,9 @@ import {
   Phone,
   Calendar,
   CreditCard,
-  MessageSquare
+  MessageSquare,
+  Activity,
+  ShieldAlert
 } from 'lucide-react';
 
 import { AdminOverview } from '@/components/admin/AdminOverview';
@@ -22,6 +24,8 @@ import { AdminCalls } from '@/components/admin/AdminCalls';
 import { AdminAppointments } from '@/components/admin/AdminAppointments';
 import { AdminPlans } from '@/components/admin/AdminPlans';
 import { AdminSupport } from '@/components/admin/AdminSupport';
+import { AdminMonitoring } from '@/components/admin/AdminMonitoring';
+import { RateLimitMonitor } from '@/components/admin/RateLimitMonitor';
 
 interface User {
   id: string;
@@ -303,7 +307,7 @@ const Admin = () => {
 
         {/* Tabs Navigation */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="grid w-full grid-cols-6 h-12">
+          <TabsList className="grid w-full grid-cols-8 h-12">
             <TabsTrigger value="overview" className="flex items-center gap-2">
               <LayoutDashboard className="h-4 w-4" />
               <span className="hidden sm:inline">סקירה</span>
@@ -327,6 +331,14 @@ const Admin = () => {
             <TabsTrigger value="support" className="flex items-center gap-2">
               <MessageSquare className="h-4 w-4" />
               <span className="hidden sm:inline">תמיכה</span>
+            </TabsTrigger>
+            <TabsTrigger value="monitoring" className="flex items-center gap-2">
+              <Activity className="h-4 w-4" />
+              <span className="hidden sm:inline">ניטור</span>
+            </TabsTrigger>
+            <TabsTrigger value="ratelimits" className="flex items-center gap-2">
+              <ShieldAlert className="h-4 w-4" />
+              <span className="hidden sm:inline">מגבלות</span>
             </TabsTrigger>
           </TabsList>
 
@@ -358,6 +370,14 @@ const Admin = () => {
 
             <TabsContent value="support">
               <AdminSupport tickets={supportTickets} onRefresh={fetchSupportTickets} />
+            </TabsContent>
+
+            <TabsContent value="monitoring">
+              <AdminMonitoring />
+            </TabsContent>
+
+            <TabsContent value="ratelimits">
+              <RateLimitMonitor />
             </TabsContent>
           </div>
         </Tabs>

@@ -4,6 +4,8 @@ import { SpeechClient } from '@google-cloud/speech';
 import { TextToSpeechClient, protos } from '@google-cloud/text-to-speech';
 import { VADProcessor } from './vad';
 import { AudioBuffer } from './audio-buffer';
+import { verifyToken, isValidDevToken } from './auth';
+import { isCircuitOpen, recordSuccess, recordFailure, getFallbackResponse } from './circuit-breaker';
 
 type ISynthesizeSpeechRequest = protos.google.cloud.texttospeech.v1.ISynthesizeSpeechRequest;
 
@@ -26,6 +28,13 @@ interface TwilioMediaMessage {
   start?: {
     streamSid: string;
     callSid: string;
+    customParameters?: {
+      sessionToken?: string;
+      userId?: string;
+      agentId?: string;
+      language?: string;
+      greeting?: string;
+    };
   };
 }
 
@@ -48,6 +57,22 @@ export class MediaBridgeSession extends EventEmitter {
   private lastTranscript: string = '';
   private sessionActive: boolean = true;
   
+  // Security
+  private validated: boolean = false;
+  private apiSecret: string;
+  private devToken: string;
+  private userId: string = '';
+  private agentId: string = '';
+  
+  // Activity tracking
+  private lastActivityTime: number = Date.now();
+  private heartbeatTimer: NodeJS.Timeout | null = null;
+  private mediaPacketsBeforeValidation: number = 0;
+  
+  // STT deduplication
+  private lastFinalTranscript: string = '';
+  private lastFinalTimestamp: number = 0;
+  
   // Metrics
   private metrics = {
     ttfsMs: 0,
@@ -57,16 +82,19 @@ export class MediaBridgeSession extends EventEmitter {
     totalTurns: 0
   };
 
-  constructor(sessionId: string, ws: WebSocket) {
+  constructor(sessionId: string, ws: WebSocket, apiSecret: string, devToken: string = '') {
     super();
     this.sessionId = sessionId;
     this.ws = ws;
+    this.apiSecret = apiSecret;
+    this.devToken = devToken;
     this.speechClient = new SpeechClient();
     this.ttsClient = new TextToSpeechClient();
     this.vad = new VADProcessor();
     this.audioBuffer = new AudioBuffer();
 
     this.setupMessageHandler();
+    this.startHeartbeat();
   }
 
   private setupMessageHandler() {
@@ -80,24 +108,57 @@ export class MediaBridgeSession extends EventEmitter {
     });
   }
 
+  private startHeartbeat() {
+    // Smart heartbeat - only log if there's been activity
+    this.heartbeatTimer = setInterval(() => {
+      const idleTime = Date.now() - this.lastActivityTime;
+      
+      if (idleTime > 60000) { // 1 minute idle
+        console.log(`[${this.sessionId}] Session idle for ${Math.round(idleTime / 1000)}s`);
+      }
+      
+      // Close sessions that are idle for too long (5 minutes)
+      if (idleTime > 300000) {
+        console.log(`[${this.sessionId}] Session timed out due to inactivity`);
+        this.cleanup();
+        this.emit('end');
+      }
+    }, 30000); // Check every 30 seconds
+    
+    this.heartbeatTimer.unref();
+  }
+
+  private updateActivity() {
+    this.lastActivityTime = Date.now();
+  }
+
   private async handleMessage(message: TwilioMediaMessage) {
+    this.updateActivity();
+    
     switch (message.event) {
       case 'start':
-        if (message.start) {
-          this.streamSid = message.start.streamSid;
-          this.callSid = message.start.callSid;
-          console.log(`[${this.sessionId}] Stream started: ${this.streamSid}, Call: ${this.callSid}`);
-        }
+        await this.handleStartEvent(message);
         break;
 
       case 'config':
         // Custom event from Edge Function with session config
         this.config = message as unknown as SessionConfig;
         console.log(`[${this.sessionId}] Config received:`, this.config);
-        await this.startSession();
+        if (this.validated) {
+          await this.startSession();
+        }
         break;
 
       case 'media':
+        // SECURITY: Drop media packets before validation
+        if (!this.validated) {
+          this.mediaPacketsBeforeValidation++;
+          if (this.mediaPacketsBeforeValidation % 100 === 0) {
+            console.log(`[${this.sessionId}] Dropped ${this.mediaPacketsBeforeValidation} media packets (not validated)`);
+          }
+          return;
+        }
+        
         if (message.media?.payload) {
           await this.handleAudio(message.media.payload);
         }
@@ -110,8 +171,81 @@ export class MediaBridgeSession extends EventEmitter {
     }
   }
 
+  private async handleStartEvent(message: TwilioMediaMessage) {
+    if (!message.start) return;
+    
+    this.streamSid = message.start.streamSid;
+    this.callSid = message.start.callSid;
+    console.log(`[${this.sessionId}] Stream started: ${this.streamSid}, Call: ${this.callSid}`);
+    
+    // Extract customParameters for validation
+    const params = message.start.customParameters || {};
+    const sessionToken = params.sessionToken;
+    
+    // Validate token
+    if (this.devToken && isValidDevToken(sessionToken || '', this.devToken)) {
+      // Dev token bypass for development
+      console.log(`[${this.sessionId}] Validated via dev token`);
+      this.validated = true;
+      this.userId = params.userId || 'dev-user';
+      this.agentId = params.agentId || 'dev-agent';
+      this.emit('validated');
+    } else if (sessionToken && this.apiSecret) {
+      // Production token validation
+      const result = verifyToken(sessionToken, this.apiSecret);
+      
+      if (result.valid && result.payload) {
+        console.log(`[${this.sessionId}] Token validated for user: ${result.payload.userId}`);
+        this.validated = true;
+        this.userId = result.payload.userId;
+        this.agentId = result.payload.agentId;
+        this.emit('validated');
+      } else {
+        console.log(`[${this.sessionId}] Token validation failed: ${result.error}`);
+        this.emit('validation_failed', result.error || 'Invalid token');
+        return;
+      }
+    } else if (!this.apiSecret) {
+      // No secret configured - allow connection (development mode)
+      console.log(`[${this.sessionId}] No API secret configured, allowing connection`);
+      this.validated = true;
+      this.userId = params.userId || 'unknown';
+      this.agentId = params.agentId || 'unknown';
+      this.emit('validated');
+    } else {
+      // No token provided
+      console.log(`[${this.sessionId}] No session token provided`);
+      this.emit('validation_failed', 'No session token');
+      return;
+    }
+    
+    // Set initial config from customParameters
+    if (params.language || params.greeting) {
+      this.config = {
+        language: params.language || 'he-IL',
+        greeting: decodeURIComponent(params.greeting || ''),
+        voiceId: '',
+        dialogflowAgentId: this.agentId,
+        dialogflowProjectId: '',
+        scriptContext: ''
+      };
+      
+      if (this.validated) {
+        await this.startSession();
+      }
+    }
+  }
+
   private async startSession() {
     if (!this.config) return;
+
+    // Check circuit breaker for STT
+    if (isCircuitOpen('google-stt')) {
+      console.log(`[${this.sessionId}] STT circuit is open, using fallback`);
+      const fallback = getFallbackResponse('google-stt', this.config.language);
+      await this.speakText(fallback.text);
+      return;
+    }
 
     // Start persistent STT stream
     this.startRecognitionStream();
@@ -158,19 +292,24 @@ export class MediaBridgeSession extends EventEmitter {
     });
 
     this.recognizeStream.on('data', (response) => {
+      recordSuccess('google-stt');
       this.handleRecognitionResult(response);
     });
 
     this.recognizeStream.on('error', (error) => {
       console.error(`[${this.sessionId}] STT error:`, error);
       this.metrics.sttFailures++;
-      // Restart stream on error
-      setTimeout(() => this.startRecognitionStream(), 100);
+      recordFailure('google-stt');
+      
+      // Restart stream on error if circuit is not open
+      if (!isCircuitOpen('google-stt')) {
+        setTimeout(() => this.startRecognitionStream(), 100);
+      }
     });
 
     this.recognizeStream.on('end', () => {
       console.log(`[${this.sessionId}] STT stream ended, restarting...`);
-      if (this.sessionActive) {
+      if (this.sessionActive && !isCircuitOpen('google-stt')) {
         this.startRecognitionStream();
       }
     });
@@ -186,11 +325,15 @@ export class MediaBridgeSession extends EventEmitter {
       'מחר', 'היום', 'בשבוע הבא', 'בחודש הבא',
       'בוקר', 'צהריים', 'ערב', 'לילה',
       'רופא', 'מספרה', 'טיפול', 'שירות',
+      // Pause words for VAD
+      'רגע', 'המתן', 'שניה',
       // Arabic phrases  
       'مرحبا', 'شكرا', 'مع السلامة', 'نعم', 'لا', 'من فضلك',
       'موعد', 'حجز', 'متاح', 'إلغاء', 'تغيير',
       'غدا', 'اليوم', 'الأسبوع القادم',
       'صباح', 'ظهر', 'مساء',
+      // Arabic pause words
+      'لحظة', 'انتظر',
       // Code-switching terms
       'תור/موعد', 'פגישה/اجتماع', 'סניף/فرع'
     ];
@@ -239,6 +382,15 @@ export class MediaBridgeSession extends EventEmitter {
       return;
     }
 
+    // STT Deduplication: Skip if same transcript within 2 seconds
+    const now = Date.now();
+    if (transcript === this.lastFinalTranscript && now - this.lastFinalTimestamp < 2000) {
+      console.log(`[${this.sessionId}] Duplicate transcript skipped: "${transcript}"`);
+      return;
+    }
+    this.lastFinalTranscript = transcript;
+    this.lastFinalTimestamp = now;
+
     // Validate final transcript
     if (confidence < 0.3 && !this.hasValidWord(transcript)) {
       console.log(`[${this.sessionId}] Rejected low-confidence transcript: "${transcript}"`);
@@ -262,12 +414,20 @@ export class MediaBridgeSession extends EventEmitter {
   private async processWithDialogflow(transcript: string) {
     if (!this.config) return;
 
+    // Check circuit breaker
+    if (isCircuitOpen('dialogflow')) {
+      const fallback = getFallbackResponse('dialogflow', this.config.language);
+      await this.speakText(fallback.text);
+      return;
+    }
+
     const startTime = Date.now();
 
     try {
       // Call Dialogflow CX
       const response = await this.callDialogflowCX(transcript);
       
+      recordSuccess('dialogflow');
       this.metrics.ttfsMs = Date.now() - startTime;
       console.log(`[${this.sessionId}] Dialogflow response in ${this.metrics.ttfsMs}ms`);
 
@@ -280,8 +440,11 @@ export class MediaBridgeSession extends EventEmitter {
       }
     } catch (error) {
       console.error(`[${this.sessionId}] Dialogflow error:`, error);
+      recordFailure('dialogflow');
+      
       // Fallback response
-      await this.speakText('סליחה, לא הצלחתי להבין. אנא נסה שוב.');
+      const fallback = getFallbackResponse('dialogflow', this.config.language);
+      await this.speakText(fallback.text);
     }
   }
 
@@ -292,7 +455,9 @@ export class MediaBridgeSession extends EventEmitter {
       event: 'dialogflow_request',
       sessionId: this.sessionId,
       text,
-      callSid: this.callSid
+      callSid: this.callSid,
+      userId: this.userId,
+      agentId: this.agentId
     }));
 
     // Wait for response from Edge Function
@@ -324,6 +489,12 @@ export class MediaBridgeSession extends EventEmitter {
   private async speakText(text: string) {
     if (!text.trim()) return;
 
+    // Check circuit breaker for TTS
+    if (isCircuitOpen('google-tts')) {
+      console.log(`[${this.sessionId}] TTS circuit is open, skipping speech`);
+      return;
+    }
+
     const startTime = Date.now();
     this.isAgentSpeaking = true;
 
@@ -339,6 +510,7 @@ export class MediaBridgeSession extends EventEmitter {
 
         const audioContent = await this.synthesizeSpeech(trimmed);
         if (audioContent && this.isAgentSpeaking) {
+          recordSuccess('google-tts');
           await this.sendAudioToTwilio(audioContent);
         }
       }
@@ -346,6 +518,7 @@ export class MediaBridgeSession extends EventEmitter {
       this.metrics.endToAudioMs = Date.now() - startTime;
     } catch (error) {
       console.error(`[${this.sessionId}] TTS error:`, error);
+      recordFailure('google-tts');
     } finally {
       this.isAgentSpeaking = false;
     }
@@ -434,14 +607,30 @@ export class MediaBridgeSession extends EventEmitter {
       event: 'session_end',
       sessionId: this.sessionId,
       callSid: this.callSid,
+      userId: this.userId,
+      agentId: this.agentId,
       metrics: this.metrics
     }));
 
     this.emit('end');
   }
 
+  /**
+   * Record WebSocket close event with full context
+   */
+  recordWSClose(code: number, reason: string) {
+    console.log(`[${this.sessionId}] WS Close recorded - Code: ${code}, Reason: ${reason}, ` +
+      `Validated: ${this.validated}, Turns: ${this.turnsCount}, ` +
+      `Duration: ${this.getDuration()}ms, MediaDropped: ${this.mediaPacketsBeforeValidation}`);
+  }
+
   cleanup() {
     this.sessionActive = false;
+    
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
     
     if (this.recognizeStream) {
       this.recognizeStream.destroy();
@@ -452,6 +641,7 @@ export class MediaBridgeSession extends EventEmitter {
     this.audioBuffer.clear();
   }
 
+  // Public getters
   getCallSid(): string {
     return this.callSid;
   }
@@ -462,5 +652,17 @@ export class MediaBridgeSession extends EventEmitter {
 
   getTurnsCount(): number {
     return this.turnsCount;
+  }
+
+  isValidated(): boolean {
+    return this.validated;
+  }
+
+  getUserId(): string {
+    return this.userId;
+  }
+
+  getAgentId(): string {
+    return this.agentId;
   }
 }
