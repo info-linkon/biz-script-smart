@@ -1,52 +1,54 @@
 
-# סקירת תהליך Voice AI ואיתור הבעיה
+# אבחון ותיקון: Media Bridge מתנתק מהר מדי
 
-## תהליך השיחה המלא
+## הבעיה שזיהיתי
 
-```text
-+-------------+     TwiML      +----------------+     WSS      +---------------+
-|   Twilio    | -------------> |  Edge Function | -----------> | Media Bridge  |
-|   (Call)    | <------------- |  (token gen)   | <----------- | (Cloud Run)   |
-+-------------+     Voice      +----------------+     Audio    +---------------+
-                                                                      |
-                    +------------------+------------------+-----------+
-                    |                  |                  |
-                    v                  v                  v
-              +-----------+     +-----------+     +-----------+
-              | Google    |     | Google    |     | Dialogflow|
-              | STT (V1)  |     | TTS       |     | CX        |
-              +-----------+     +-----------+     +-----------+
-```
+כשאתה מתקשר, ה-Media Bridge מתנתק תוך ~10 שניות ואתה שומע:
+> "יש בעיה זמנית בחיבור. נמשיך בשיחה רגילה..."
 
-## מה עובד
+זו הודעת Fallback שמופעלת כשה-WebSocket Stream נכשל.
 
-| שלב | סטטוס | הוכחה |
-|-----|--------|------|
-| שיחה מגיעה ל-Twilio | ✅ | לוגים מראים `Twilio call received` |
-| Edge Function מייצר TwiML | ✅ | לוגים מראים `TwiML Response (token generated)` |
-| טוקן נוצר נכון | ✅ | `hasToken: true` בלוגים |
-| WebSocket Connection | ✅ | השיחה לא מתנתקת |
+## סיבות אפשריות (לפי סדר סבירות)
 
-## בעיה מזוהה: חסר MEDIA_BRIDGE_SECRET ב-Cloud Run
+| סיבה | הסבר |
+|------|------|
+| TTS API לא מופעל | ה-Session שולח ברכה, TTS נכשל → קריסה |
+| STT API לא עובד | streamingRecognize נכשל → קריסה |
+| Secret לא תואם | הטוקן לא מאומת → Session לא עובד כראוי |
+| GOOGLE_CLOUD_CREDENTIALS חסר | Media Bridge לא יכול להתחבר ל-Google Cloud |
 
-כשפרסת את ה-Media Bridge, השתמשת בפקודה:
+## פעולות נדרשות
+
+### שלב 1: בדוק את לוגי Cloud Run
+הרץ בטרמינל בזמן שאתה מחייג:
 ```bash
-gcloud run deploy media-bridge \
-  --set-env-vars="NODE_ENV=production,LOG_LEVEL=info"
+gcloud run logs tail media-bridge --project voice-ai-production
 ```
 
-**חסר:** `MEDIA_BRIDGE_SECRET` - בלי הסוד הזה:
-1. ה-Media Bridge לא יכול לאמת את הטוקן
-2. Session לא מאומת → לא נשלחת ברכה → שקט!
+חפש:
+- `Session validated` או `Validation failed`
+- `STT stream started` או `STT error`
+- `TTS error`
+- `GOOGLE_APPLICATION_CREDENTIALS`
 
-## תיקון נדרש
+### שלב 2: ודא שה-APIs מופעלים
+```bash
+gcloud services list --enabled --project=voice-ai-production | grep -E "(speech|text)"
+```
 
-### שלב 1: בדוק את הערך של MEDIA_BRIDGE_SECRET ב-Lovable Cloud
+אם לא רואים `speech.googleapis.com` ו-`texttospeech.googleapis.com`:
+```bash
+gcloud services enable speech.googleapis.com --project=voice-ai-production
+gcloud services enable texttospeech.googleapis.com --project=voice-ai-production
+```
 
-הסוד כבר מוגדר ב-Edge Functions. צריך לקבל את אותו ערך ולהוסיף אותו ל-Cloud Run.
+### שלב 3: ודא שה-Credentials מוגדרים ב-Cloud Run
 
-### שלב 2: פרוס מחדש עם כל המשתנים הנדרשים
+ב-Media Bridge, ה-Google Cloud SDKs מצפים לאחד מהבאים:
+- קובץ credentials בנתיב שמוגדר ב-`GOOGLE_APPLICATION_CREDENTIALS`
+- Service Account אוטומטי של Cloud Run (אם מפעילים עם `--service-account`)
 
+**פריסה נכונה עם Service Account:**
 ```bash
 gcloud run deploy media-bridge \
   --source . \
@@ -55,86 +57,54 @@ gcloud run deploy media-bridge \
   --service-account=media-bridge-sa@voice-ai-production.iam.gserviceaccount.com \
   --min-instances 1 \
   --session-affinity \
-  --set-env-vars="NODE_ENV=production,LOG_LEVEL=info,MEDIA_BRIDGE_SECRET=YOUR_SECRET_VALUE_HERE"
+  --set-env-vars="NODE_ENV=production,LOG_LEVEL=debug,MEDIA_BRIDGE_SECRET=<הסוד שהזנת>"
 ```
 
-### שלב 3: בדוק לוגים של Cloud Run
+**שים לב:** הוספתי `LOG_LEVEL=debug` כדי לקבל יותר לוגים.
 
+### שלב 4: הענק הרשאות ל-Service Account
 ```bash
-gcloud logging read \
-  "resource.type=cloud_run_revision AND resource.labels.service_name=media-bridge" \
-  --project=voice-ai-production \
-  --limit=50 \
-  --format='value(textPayload)'
+gcloud projects add-iam-policy-binding voice-ai-production \
+  --member="serviceAccount:media-bridge-sa@voice-ai-production.iam.gserviceaccount.com" \
+  --role="roles/speech.client"
 ```
+
+**הערה:** לעומת TTS שלא צריך role מיוחד, STT דורש `roles/speech.client`.
+
+### שלב 5: בדיקה
+
+1. פרוס מחדש עם `LOG_LEVEL=debug`
+2. פתח טרמינל חדש עם `gcloud run logs tail`
+3. חייג ל-+972765993896
+4. צפה בלוגים ושלח לי את מה שאתה רואה
+
+---
 
 ## פרטים טכניים
 
-### מה קורה בקוד כשאין Secret
+### למה זה קורה?
 
-ב-`session.ts` שורה 218-224:
-```typescript
-} else if (!this.apiSecret) {
-  // No secret configured - allow connection (development mode)
-  console.log(`[${this.sessionId}] No API secret configured, allowing connection`);
-  this.validated = true;
-  // ...
-}
+הקוד ב-`session.ts` מנסה:
+1. לפתוח STT stream (שורה 248-271)
+2. לשלוח ברכה באמצעות TTS (שורה 278-281)
+
+אם אחד מהם נכשל בגלל credentials/API, ה-session קורס או מתנתק.
+
+### מה מציג ללקוח?
+
+כשה-WebSocket נסגר, Twilio עובר ל-Fallback ב-TwiML (שורות 175-181):
+```xml
+<Say>יש בעיה זמנית בחיבור...</Say>
+<Gather input="speech" action="twilio-dialogflow-bridge">
 ```
 
-למעשה, ה-Session כן מאומת (בגלל dev mode), אז צריך לבדוק בעיה אחרת...
+זה מסביר למה אתה שומע את ההודעה הזו ואז השיחה ממשיכה (אבל רק דרך Dialogflow ישיר, לא דרך Media Bridge).
 
-### בעיה אפשרית נוספת: TTS API לא מופעל
+### ההבדל בין השיחות
 
-ה-service account קיבל `roles/speech.client` אבל לא `roles/texttospeech.client` (כי הוא לא קיים).
+| תאריך | סוג | מה קרה |
+|-------|-----|---------|
+| 28/01 22:52 | Media Bridge עבד | שיחה של 8 שניות עם תמלול |
+| 29/01 07:52 | Media Bridge נכשל | Fallback ל-Dialogflow ישיר |
 
-צריך לוודא ש-**Text-to-Speech API** מופעל בפרויקט:
-
-```bash
-gcloud services enable texttospeech.googleapis.com --project=voice-ai-production
-```
-
-### בדיקת לוגים
-
-הרץ את הפקודה הבאה כדי לראות מה קורה ב-Media Bridge:
-
-```bash
-gcloud run logs tail media-bridge --project voice-ai-production
-```
-
-ותחייג בו-זמנית. תחפש:
-- `Session validated` - האם האימות עבר?
-- `STT stream started` - האם ה-STT התחיל?
-- `Greeting` - האם הברכה נשלחה?
-- `TTS error` / `STT error` - האם יש שגיאות?
-
-## סיכום פעולות נדרשות
-
-1. **הפעל Text-to-Speech API:**
-   ```bash
-   gcloud services enable texttospeech.googleapis.com --project=voice-ai-production
-   ```
-
-2. **בדוק לוגים בזמן שיחה:**
-   ```bash
-   gcloud run logs tail media-bridge --project voice-ai-production
-   ```
-
-3. **אם יש שגיאות הרשאה** - הוסף תפקיד:
-   ```bash
-   gcloud projects add-iam-policy-binding voice-ai-production \
-     --member="serviceAccount:media-bridge-sa@voice-ai-production.iam.gserviceaccount.com" \
-     --role="roles/texttospeech.admin"
-   ```
-
-4. **פרוס מחדש עם MEDIA_BRIDGE_SECRET:**
-   ```bash
-   gcloud run deploy media-bridge \
-     --source . \
-     --region me-west1 \
-     --project voice-ai-production \
-     --service-account=media-bridge-sa@voice-ai-production.iam.gserviceaccount.com \
-     --min-instances 1 \
-     --session-affinity \
-     --set-env-vars="NODE_ENV=production,LOG_LEVEL=info,MEDIA_BRIDGE_SECRET=<SECRET>"
-   ```
+ייתכן שהפרסת מחדש בין לבין ומשהו השתנה (חסר secret/credentials).
