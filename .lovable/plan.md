@@ -1,79 +1,140 @@
 
-# תיקון: הסוכן לא מדבר - חסרות הרשאות Google Cloud
+# סקירת תהליך Voice AI ואיתור הבעיה
 
-## ניתוח הבעיה
+## תהליך השיחה המלא
 
-השיחה **לא מתנתקת** עכשיו (יש חיבור WebSocket), אבל הסוכן **לא מדבר** כי:
-
-1. **Media Bridge משתמש ב-Google Cloud APIs**:
-   - `@google-cloud/speech` - STT (זיהוי דיבור)
-   - `@google-cloud/text-to-speech` - TTS (המרת טקסט לדיבור)
-
-2. **הפריסה חסרה Service Account**:
-   - פרסת עם `gcloud run deploy --source .` בלי `--service-account`
-   - ה-default service account אין לו הרשאות ל-Speech/TTS APIs
-   - לכן הברכה לא נשלחת
-
----
-
-## תוכנית תיקון
-
-### שלב 1: ודא שה-Service Account קיים ויש לו הרשאות
-
-```bash
-# בדוק אם ה-service account קיים
-gcloud iam service-accounts list --project=voice-ai-production | grep media-bridge
-
-# אם לא קיים, צור אותו
-gcloud iam service-accounts create media-bridge-sa \
-  --display-name="Media Bridge Service Account" \
-  --project=voice-ai-production
-
-# הוסף הרשאות STT
-gcloud projects add-iam-policy-binding voice-ai-production \
-  --member="serviceAccount:media-bridge-sa@voice-ai-production.iam.gserviceaccount.com" \
-  --role="roles/speech.client"
-
-# הוסף הרשאות TTS
-gcloud projects add-iam-policy-binding voice-ai-production \
-  --member="serviceAccount:media-bridge-sa@voice-ai-production.iam.gserviceaccount.com" \
-  --role="roles/texttospeech.client"
+```text
++-------------+     TwiML      +----------------+     WSS      +---------------+
+|   Twilio    | -------------> |  Edge Function | -----------> | Media Bridge  |
+|   (Call)    | <------------- |  (token gen)   | <----------- | (Cloud Run)   |
++-------------+     Voice      +----------------+     Audio    +---------------+
+                                                                      |
+                    +------------------+------------------+-----------+
+                    |                  |                  |
+                    v                  v                  v
+              +-----------+     +-----------+     +-----------+
+              | Google    |     | Google    |     | Dialogflow|
+              | STT (V1)  |     | TTS       |     | CX        |
+              +-----------+     +-----------+     +-----------+
 ```
 
-### שלב 2: פרוס מחדש עם Service Account
+## מה עובד
+
+| שלב | סטטוס | הוכחה |
+|-----|--------|------|
+| שיחה מגיעה ל-Twilio | ✅ | לוגים מראים `Twilio call received` |
+| Edge Function מייצר TwiML | ✅ | לוגים מראים `TwiML Response (token generated)` |
+| טוקן נוצר נכון | ✅ | `hasToken: true` בלוגים |
+| WebSocket Connection | ✅ | השיחה לא מתנתקת |
+
+## בעיה מזוהה: חסר MEDIA_BRIDGE_SECRET ב-Cloud Run
+
+כשפרסת את ה-Media Bridge, השתמשת בפקודה:
+```bash
+gcloud run deploy media-bridge \
+  --set-env-vars="NODE_ENV=production,LOG_LEVEL=info"
+```
+
+**חסר:** `MEDIA_BRIDGE_SECRET` - בלי הסוד הזה:
+1. ה-Media Bridge לא יכול לאמת את הטוקן
+2. Session לא מאומת → לא נשלחת ברכה → שקט!
+
+## תיקון נדרש
+
+### שלב 1: בדוק את הערך של MEDIA_BRIDGE_SECRET ב-Lovable Cloud
+
+הסוד כבר מוגדר ב-Edge Functions. צריך לקבל את אותו ערך ולהוסיף אותו ל-Cloud Run.
+
+### שלב 2: פרוס מחדש עם כל המשתנים הנדרשים
 
 ```bash
-cd media-bridge && gcloud run deploy media-bridge \
+gcloud run deploy media-bridge \
   --source . \
   --region me-west1 \
   --project voice-ai-production \
   --service-account=media-bridge-sa@voice-ai-production.iam.gserviceaccount.com \
   --min-instances 1 \
   --session-affinity \
-  --set-env-vars="NODE_ENV=production,LOG_LEVEL=info"
+  --set-env-vars="NODE_ENV=production,LOG_LEVEL=info,MEDIA_BRIDGE_SECRET=YOUR_SECRET_VALUE_HERE"
 ```
 
-### שלב 3: בדוק לוגים
+### שלב 3: בדוק לוגים של Cloud Run
+
+```bash
+gcloud logging read \
+  "resource.type=cloud_run_revision AND resource.labels.service_name=media-bridge" \
+  --project=voice-ai-production \
+  --limit=50 \
+  --format='value(textPayload)'
+```
+
+## פרטים טכניים
+
+### מה קורה בקוד כשאין Secret
+
+ב-`session.ts` שורה 218-224:
+```typescript
+} else if (!this.apiSecret) {
+  // No secret configured - allow connection (development mode)
+  console.log(`[${this.sessionId}] No API secret configured, allowing connection`);
+  this.validated = true;
+  // ...
+}
+```
+
+למעשה, ה-Session כן מאומת (בגלל dev mode), אז צריך לבדוק בעיה אחרת...
+
+### בעיה אפשרית נוספת: TTS API לא מופעל
+
+ה-service account קיבל `roles/speech.client` אבל לא `roles/texttospeech.client` (כי הוא לא קיים).
+
+צריך לוודא ש-**Text-to-Speech API** מופעל בפרויקט:
+
+```bash
+gcloud services enable texttospeech.googleapis.com --project=voice-ai-production
+```
+
+### בדיקת לוגים
+
+הרץ את הפקודה הבאה כדי לראות מה קורה ב-Media Bridge:
 
 ```bash
 gcloud run logs tail media-bridge --project voice-ai-production
 ```
 
-תחפש שגיאות כמו:
-- `Permission denied` 
-- `API not enabled`
-- `Could not load the default credentials`
+ותחייג בו-זמנית. תחפש:
+- `Session validated` - האם האימות עבר?
+- `STT stream started` - האם ה-STT התחיל?
+- `Greeting` - האם הברכה נשלחה?
+- `TTS error` / `STT error` - האם יש שגיאות?
 
----
+## סיכום פעולות נדרשות
 
-## פרטים טכניים
+1. **הפעל Text-to-Speech API:**
+   ```bash
+   gcloud services enable texttospeech.googleapis.com --project=voice-ai-production
+   ```
 
-| רכיב | סטטוס |
-|------|-------|
-| WebSocket Connection | ✅ עובד |
-| Token Validation | ✅ עובד |
-| Google STT | ❌ חסרות הרשאות |
-| Google TTS | ❌ חסרות הרשאות |
-| Greeting | ❌ לא נשלח |
+2. **בדוק לוגים בזמן שיחה:**
+   ```bash
+   gcloud run logs tail media-bridge --project voice-ai-production
+   ```
 
-הבעיה היא **הרשאות בלבד** - הקוד תקין, פשוט צריך לפרוס עם ה-service account הנכון.
+3. **אם יש שגיאות הרשאה** - הוסף תפקיד:
+   ```bash
+   gcloud projects add-iam-policy-binding voice-ai-production \
+     --member="serviceAccount:media-bridge-sa@voice-ai-production.iam.gserviceaccount.com" \
+     --role="roles/texttospeech.admin"
+   ```
+
+4. **פרוס מחדש עם MEDIA_BRIDGE_SECRET:**
+   ```bash
+   gcloud run deploy media-bridge \
+     --source . \
+     --region me-west1 \
+     --project voice-ai-production \
+     --service-account=media-bridge-sa@voice-ai-production.iam.gserviceaccount.com \
+     --min-instances 1 \
+     --session-affinity \
+     --set-env-vars="NODE_ENV=production,LOG_LEVEL=info,MEDIA_BRIDGE_SECRET=<SECRET>"
+   ```
