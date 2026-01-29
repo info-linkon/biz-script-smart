@@ -151,19 +151,34 @@ serve(async (req) => {
         streamUrl = `wss://${supabaseUrl.replace('https://', '')}/functions/v1/twilio-media-stream`;
       }
 
-      // TwiML with sessionToken in customParameters for secure authentication
-      const twiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Connect>
-    <Stream url="${streamUrl}">
-      <Parameter name="sessionToken" value="${sessionToken}" />
-      <Parameter name="userId" value="${userId}" />
-      <Parameter name="agentId" value="${agentId}" />
-      <Parameter name="language" value="${langCode}" />
-      <Parameter name="greeting" value="${encodeURIComponent(greeting)}" />
-    </Stream>
-  </Connect>
-</Response>`;
+       // TwiML with sessionToken in customParameters for secure authentication.
+       // IMPORTANT: If the WebSocket closes immediately (e.g. auth/connectivity issue),
+       // Twilio will continue to the verbs below, preventing an immediate hangup.
+       const fallbackIntro = language === 'he'
+         ? 'יש בעיה זמנית בחיבור. נמשיך בשיחה רגילה. איך אפשר לעזור?'
+         : language === 'ar'
+           ? 'هناك مشكلة مؤقتة في الاتصال. سنواصل المكالمة بشكل عادي. كيف يمكنني مساعدتك؟'
+           : 'Temporary connection issue. Continuing in standard mode. How can I help?';
+
+       const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+ <Response>
+   <Connect>
+     <Stream url="${streamUrl}">
+       <Parameter name="sessionToken" value="${sessionToken}" />
+       <Parameter name="userId" value="${userId}" />
+       <Parameter name="agentId" value="${agentId}" />
+       <Parameter name="language" value="${langCode}" />
+       <Parameter name="greeting" value="${encodeURIComponent(greeting)}" />
+     </Stream>
+   </Connect>
+
+   <!-- Fallback path: only runs if <Connect><Stream> ends (e.g. WS disconnect) -->
+   <Say language="${langCode}" voice="${voiceName}">${fallbackIntro}</Say>
+   <Gather input="speech" language="${langCode}" speechTimeout="auto" action="${supabaseUrl}/functions/v1/twilio-dialogflow-bridge" method="POST">
+     <Say language="${langCode}" voice="${voiceName}"></Say>
+   </Gather>
+   <Say language="${langCode}" voice="${voiceName}">${language === 'he' ? 'תודה שהתקשרת. להתראות!' : 'Thank you for calling. Goodbye!'}</Say>
+ </Response>`;
       
       console.log('📄 TwiML Response (token generated):', { 
         streamUrl, 
