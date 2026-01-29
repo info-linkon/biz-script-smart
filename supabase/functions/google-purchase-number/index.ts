@@ -174,81 +174,148 @@ serve(async (req) => {
       // Determine voice to use
       const voiceToUse = voice_id || (language === 'he' ? 'he-IL-Chirp3-HD-Aoede' : language === 'ar' ? 'ar-XA-Chirp3-HD-Aoede' : 'en-US-Chirp3-HD-Aoede');
 
-      const agentPayload = {
-        displayName: `${profile.business_name || 'Business'} Agent`,
-        defaultLanguageCode: languageCode,
-        timeZone: 'Asia/Jerusalem',
-        description: `AI Agent for ${profile.business_name}`,
-        speechToTextSettings: {
-          enableSpeechAdaptation: true
-        },
-        advancedSettings: {
-          speechSettings: {
-            endpointerSensitivity: 50,
-            noSpeechTimeout: "5s",
-            useTimeoutBasedEndpointing: true,
-            models: {
-              [languageCode]: "chirp_2"
-            }
-          }
-        },
-        textToSpeechSettings: {
-          synthesizeSpeechConfigs: {
-            [languageCode]: {
-              voice: { name: voiceToUse },
-              audioEncoding: "OUTPUT_AUDIO_ENCODING_LINEAR_16"
-            }
-          }
-        }
-      };
+      const agentDisplayName = `${profile.business_name || 'Business'} Agent`;
 
-      const createAgentResponse = await fetch(
+      // First, list existing agents to check if one with this name exists
+      const listAgentsResponse = await fetch(
         `https://dialogflow.googleapis.com/v3/projects/${googleProjectId}/locations/global/agents`,
         {
-          method: 'POST',
+          method: 'GET',
           headers: {
             'Authorization': `Bearer ${accessToken}`,
             'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(agentPayload)
+          }
         }
       );
 
-      if (!createAgentResponse.ok) {
-        const errorText = await createAgentResponse.text();
-        console.error('Failed to create Dialogflow agent:', errorText);
-        return new Response(
-          JSON.stringify({ error: 'Failed to create AI agent', details: errorText }),
-          { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      let existingAgentId = null;
+      if (listAgentsResponse.ok) {
+        const agentsData = await listAgentsResponse.json();
+        const existingAgent = (agentsData.agents || []).find(
+          (agent: { displayName: string }) => agent.displayName === agentDisplayName
         );
+        if (existingAgent) {
+          existingAgentId = existingAgent.name.split('/').pop();
+          console.log('Found existing agent with same name:', existingAgentId);
+        }
       }
 
-      const agentData = await createAgentResponse.json();
-      dialogflowAgentId = agentData.name.split('/').pop();
-      
-      // Create webhook for the agent
-      const webhookPayload = {
-        displayName: "Business Actions Webhook",
-        genericWebService: {
-          uri: `${supabaseUrl}/functions/v1/google-webhook`,
-          requestHeaders: {
-            "x-agent-user-id": userId
-          }
-        },
-        timeout: "30s"
-      };
-
-      await fetch(
-        `https://dialogflow.googleapis.com/v3/${agentData.name}/webhooks`,
-        {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${accessToken}`,
-            'Content-Type': 'application/json',
+      if (existingAgentId) {
+        // Use existing agent
+        dialogflowAgentId = existingAgentId;
+        console.log('Reusing existing Dialogflow agent:', dialogflowAgentId);
+      } else {
+        // Create new agent
+        const agentPayload = {
+          displayName: agentDisplayName,
+          defaultLanguageCode: languageCode,
+          timeZone: 'Asia/Jerusalem',
+          description: `AI Agent for ${profile.business_name}`,
+          speechToTextSettings: {
+            enableSpeechAdaptation: true
           },
-          body: JSON.stringify(webhookPayload)
+          advancedSettings: {
+            speechSettings: {
+              endpointerSensitivity: 50,
+              noSpeechTimeout: "5s",
+              useTimeoutBasedEndpointing: true,
+              models: {
+                [languageCode]: "chirp_2"
+              }
+            }
+          },
+          textToSpeechSettings: {
+            synthesizeSpeechConfigs: {
+              [languageCode]: {
+                voice: { name: voiceToUse },
+                audioEncoding: "OUTPUT_AUDIO_ENCODING_LINEAR_16"
+              }
+            }
+          }
+        };
+
+        const createAgentResponse = await fetch(
+          `https://dialogflow.googleapis.com/v3/projects/${googleProjectId}/locations/global/agents`,
+          {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${accessToken}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(agentPayload)
+          }
+        );
+
+        if (!createAgentResponse.ok) {
+          const errorText = await createAgentResponse.text();
+          console.error('Failed to create Dialogflow agent:', errorText);
+          
+          // Check if it's an ALREADY_EXISTS error - try to find and use it
+          if (errorText.includes('ALREADY_EXISTS')) {
+            console.log('Agent already exists, attempting to find it...');
+            const retryListResponse = await fetch(
+              `https://dialogflow.googleapis.com/v3/projects/${googleProjectId}/locations/global/agents`,
+              {
+                method: 'GET',
+                headers: {
+                  'Authorization': `Bearer ${accessToken}`,
+                  'Content-Type': 'application/json',
+                }
+              }
+            );
+            
+            if (retryListResponse.ok) {
+              const retryAgentsData = await retryListResponse.json();
+              const foundAgent = (retryAgentsData.agents || []).find(
+                (agent: { displayName: string }) => agent.displayName === agentDisplayName
+              );
+              if (foundAgent) {
+                dialogflowAgentId = foundAgent.name.split('/').pop();
+                console.log('Found existing agent after ALREADY_EXISTS error:', dialogflowAgentId);
+              }
+            }
+            
+            if (!dialogflowAgentId) {
+              return new Response(
+                JSON.stringify({ error: 'Failed to create AI agent', details: errorText }),
+                { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+              );
+            }
+          } else {
+            return new Response(
+              JSON.stringify({ error: 'Failed to create AI agent', details: errorText }),
+              { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+            );
+          }
+        } else {
+          const agentData = await createAgentResponse.json();
+          dialogflowAgentId = agentData.name.split('/').pop();
+          
+          // Create webhook for the agent
+          const webhookPayload = {
+            displayName: "Business Actions Webhook",
+            genericWebService: {
+              uri: `${supabaseUrl}/functions/v1/google-webhook`,
+              requestHeaders: {
+                "x-agent-user-id": userId
+              }
+            },
+            timeout: "30s"
+          };
+
+          await fetch(
+            `https://dialogflow.googleapis.com/v3/projects/${googleProjectId}/locations/global/agents/${dialogflowAgentId}/webhooks`,
+            {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${accessToken}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify(webhookPayload)
+            }
+          );
         }
-      );
+      }
 
       // Update profile with agent ID
       await supabase
@@ -259,7 +326,7 @@ serve(async (req) => {
         })
         .eq('user_id', userId);
       
-      console.log('Dialogflow agent created:', dialogflowAgentId);
+      console.log('Dialogflow agent configured:', dialogflowAgentId);
     }
 
     // Step 2: Search for available phone numbers

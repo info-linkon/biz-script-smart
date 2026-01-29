@@ -146,10 +146,11 @@ serve(async (req) => {
       );
     }
 
-    // Check if agent already exists
+    // Check if agent already exists in profile
     if (profile.dialogflow_agent_id) {
       return new Response(
         JSON.stringify({ 
+          success: true,
           agent_id: profile.dialogflow_agent_id,
           message: 'Agent already exists'
         }),
@@ -214,29 +215,99 @@ serve(async (req) => {
       }
     };
 
-    const createAgentResponse = await fetch(
+    // First, check if agent with this name already exists
+    const listAgentsResponse = await fetch(
       `https://dialogflow.googleapis.com/v3/projects/${projectId}/locations/${location}/agents`,
       {
-        method: 'POST',
+        method: 'GET',
         headers: {
           'Authorization': `Bearer ${accessToken}`,
           'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(agentPayload)
+        }
       }
     );
 
-    if (!createAgentResponse.ok) {
-      const errorText = await createAgentResponse.text();
-      console.error('Failed to create agent:', errorText);
-      return new Response(
-        JSON.stringify({ error: 'Failed to create Dialogflow agent', details: errorText }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    let agentId = '';
+    let agentName = '';
+    let agentAlreadyExisted = false;
+
+    if (listAgentsResponse.ok) {
+      const agentsData = await listAgentsResponse.json();
+      const existingAgent = (agentsData.agents || []).find(
+        (agent: { displayName: string }) => agent.displayName === agentDisplayName
       );
+      
+      if (existingAgent) {
+        agentId = existingAgent.name.split('/').pop();
+        agentName = existingAgent.name;
+        agentAlreadyExisted = true;
+        console.log('Found existing agent:', agentId);
+      }
     }
 
-    const agentData = await createAgentResponse.json();
-    const agentId = agentData.name.split('/').pop();
+    if (!agentAlreadyExisted) {
+      // Create new agent
+      const createAgentResponse = await fetch(
+        `https://dialogflow.googleapis.com/v3/projects/${projectId}/locations/${location}/agents`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(agentPayload)
+        }
+      );
+
+      if (!createAgentResponse.ok) {
+        const errorText = await createAgentResponse.text();
+        console.error('Failed to create agent:', errorText);
+        
+        // Handle ALREADY_EXISTS by finding the existing agent
+        if (errorText.includes('ALREADY_EXISTS')) {
+          console.log('Agent already exists, fetching it...');
+          const retryListResponse = await fetch(
+            `https://dialogflow.googleapis.com/v3/projects/${projectId}/locations/${location}/agents`,
+            {
+              method: 'GET',
+              headers: {
+                'Authorization': `Bearer ${accessToken}`,
+                'Content-Type': 'application/json',
+              }
+            }
+          );
+          
+          if (retryListResponse.ok) {
+            const retryAgentsData = await retryListResponse.json();
+            const foundAgent = (retryAgentsData.agents || []).find(
+              (agent: { displayName: string }) => agent.displayName === agentDisplayName
+            );
+            if (foundAgent) {
+              agentId = foundAgent.name.split('/').pop();
+              agentName = foundAgent.name;
+              agentAlreadyExisted = true;
+              console.log('Found existing agent after ALREADY_EXISTS:', agentId);
+            }
+          }
+          
+          if (!agentId) {
+            return new Response(
+              JSON.stringify({ error: 'Failed to create Dialogflow agent', details: errorText }),
+              { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+            );
+          }
+        } else {
+          return new Response(
+            JSON.stringify({ error: 'Failed to create Dialogflow agent', details: errorText }),
+            { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
+      } else {
+        const agentData = await createAgentResponse.json();
+        agentId = agentData.name.split('/').pop();
+        agentName = agentData.name;
+      }
+    }
 
     // Create webhook for business actions
     const webhookUrl = `${supabaseUrl}/functions/v1/google-webhook`;
@@ -253,7 +324,7 @@ serve(async (req) => {
     };
 
     const webhookResponse = await fetch(
-      `https://dialogflow.googleapis.com/v3/${agentData.name}/webhooks`,
+      `https://dialogflow.googleapis.com/v3/${agentName}/webhooks`,
       {
         method: 'POST',
         headers: {
@@ -271,7 +342,7 @@ serve(async (req) => {
     }
 
     // Get the default flow
-    const defaultFlowName = `${agentData.name}/flows/00000000-0000-0000-0000-000000000000`;
+    const defaultFlowName = `${agentName}/flows/00000000-0000-0000-0000-000000000000`;
     
     // Create intents with responses
     const intents = getIntentsWithRoutes(language, script);
@@ -279,7 +350,7 @@ serve(async (req) => {
 
     for (const intent of intents) {
       const intentResponse = await fetch(
-        `https://dialogflow.googleapis.com/v3/${agentData.name}/intents`,
+        `https://dialogflow.googleapis.com/v3/${agentName}/intents`,
         {
           method: 'POST',
           headers: {
@@ -303,7 +374,7 @@ serve(async (req) => {
     const faqIntents = createFaqIntents(script?.faq || [], language);
     for (const faqIntent of faqIntents) {
       const faqResponse = await fetch(
-        `https://dialogflow.googleapis.com/v3/${agentData.name}/intents`,
+        `https://dialogflow.googleapis.com/v3/${agentName}/intents`,
         {
           method: 'POST',
           headers: {
@@ -434,7 +505,7 @@ serve(async (req) => {
     };
 
     const generativeResponse = await fetch(
-      `https://dialogflow.googleapis.com/v3/${agentData.name}/generativeSettings?updateMask=fallbackSettings,llmModelSettings,knowledgeConnectorSettings`,
+      `https://dialogflow.googleapis.com/v3/${agentName}/generativeSettings?updateMask=fallbackSettings,llmModelSettings,knowledgeConnectorSettings`,
       {
         method: 'PATCH',
         headers: {
@@ -451,7 +522,7 @@ serve(async (req) => {
 
     // Train the agent
     await fetch(
-      `https://dialogflow.googleapis.com/v3/${agentData.name}/flows/${defaultFlowName.split('/').pop()}:train`,
+      `https://dialogflow.googleapis.com/v3/${agentName}/flows/${defaultFlowName.split('/').pop()}:train`,
       {
         method: 'POST',
         headers: {
@@ -465,7 +536,7 @@ serve(async (req) => {
     await supabase
       .from('profiles')
       .update({ 
-        dialogflow_agent_id: agentId,
+        dialogflow_agent_id: agentId!,
         voice_provider: 'google'
       })
       .eq('user_id', userId);
@@ -473,12 +544,13 @@ serve(async (req) => {
     return new Response(
       JSON.stringify({ 
         success: true,
-        agent_id: agentId,
-        agent_name: agentData.name,
+        agent_id: agentId!,
+        agent_name: agentName!,
         webhook_id: webhookName,
         intents_created: Object.keys(createdIntents).length,
         faq_intents: faqIntents.length,
-        generative_enabled: true
+        generative_enabled: true,
+        reused_existing: agentAlreadyExisted
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
