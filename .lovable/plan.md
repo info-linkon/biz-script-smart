@@ -1,95 +1,79 @@
 
-
-# תיקון ניתוק שיחות - Media Bridge
+# תיקון: הסוכן לא מדבר - חסרות הרשאות Google Cloud
 
 ## ניתוח הבעיה
 
-### מה קורה
-1. שיחה נכנסת למספר **+972765993896**
-2. ה-Edge Function `twilio-dialogflow-bridge` מזהה את המספר ומחזיר TwiML תקין
-3. ה-TwiML מכוון ל-WebSocket של Media Bridge: `wss://media-bridge-692599475968.me-west1.run.app`
-4. **החיבור נכשל** וה-שיחה מתנתקת
+השיחה **לא מתנתקת** עכשיו (יש חיבור WebSocket), אבל הסוכן **לא מדבר** כי:
 
-### שורש הבעיה
+1. **Media Bridge משתמש ב-Google Cloud APIs**:
+   - `@google-cloud/speech` - STT (זיהוי דיבור)
+   - `@google-cloud/text-to-speech` - TTS (המרת טקסט לדיבור)
 
-נמצאה **שגיאת קומפילציה** בקוד ה-Media Bridge:
-
-```typescript
-// שורה 58:
-private sessionActive: boolean = true;
-
-// Session State Tracking
-private sessionState: 'idle' | 'awaiting_user' | 'agent_speaking' | 'processing' = 'idle';
-private lastActivityType: 'none' | 'media_in' | 'stt_result' | 'tts_sent' | 'dialogflow' = 'none';
-
-// שורה 63 - כפילות!
-private sessionActive: boolean = true;
-```
-
-הגדרה כפולה של `sessionActive` גורמת לשגיאת TypeScript, מה שמונע את הפריסה של הקוד החדש ל-Cloud Run.
+2. **הפריסה חסרה Service Account**:
+   - פרסת עם `gcloud run deploy --source .` בלי `--service-account`
+   - ה-default service account אין לו הרשאות ל-Speech/TTS APIs
+   - לכן הברכה לא נשלחת
 
 ---
 
 ## תוכנית תיקון
 
-### שלב 1: תיקון הכפילות ב-session.ts
-
-הסרת השורה הכפולה `private sessionActive: boolean = true;` משורה 63.
-
-**לפני:**
-```typescript
-private sessionActive: boolean = true;
-
-// Session State Tracking
-private sessionState: 'idle' | 'awaiting_user' | 'agent_speaking' | 'processing' = 'idle';
-private lastActivityType: 'none' | 'media_in' | 'stt_result' | 'tts_sent' | 'dialogflow' = 'none';
-private sessionActive: boolean = true;  // ← כפילות - למחוק!
-```
-
-**אחרי:**
-```typescript
-private sessionActive: boolean = true;
-
-// Session State Tracking
-private sessionState: 'idle' | 'awaiting_user' | 'agent_speaking' | 'processing' = 'idle';
-private lastActivityType: 'none' | 'media_in' | 'stt_result' | 'tts_sent' | 'dialogflow' = 'none';
-```
-
-### שלב 2: פריסה מחדש ל-Cloud Run
-
-לאחר התיקון, יש לפרוס את ה-Media Bridge מחדש:
+### שלב 1: ודא שה-Service Account קיים ויש לו הרשאות
 
 ```bash
-cd media-bridge
-gcloud run deploy media-bridge \
+# בדוק אם ה-service account קיים
+gcloud iam service-accounts list --project=voice-ai-production | grep media-bridge
+
+# אם לא קיים, צור אותו
+gcloud iam service-accounts create media-bridge-sa \
+  --display-name="Media Bridge Service Account" \
+  --project=voice-ai-production
+
+# הוסף הרשאות STT
+gcloud projects add-iam-policy-binding voice-ai-production \
+  --member="serviceAccount:media-bridge-sa@voice-ai-production.iam.gserviceaccount.com" \
+  --role="roles/speech.client"
+
+# הוסף הרשאות TTS
+gcloud projects add-iam-policy-binding voice-ai-production \
+  --member="serviceAccount:media-bridge-sa@voice-ai-production.iam.gserviceaccount.com" \
+  --role="roles/texttospeech.client"
+```
+
+### שלב 2: פרוס מחדש עם Service Account
+
+```bash
+cd media-bridge && gcloud run deploy media-bridge \
   --source . \
   --region me-west1 \
   --project voice-ai-production \
+  --service-account=media-bridge-sa@voice-ai-production.iam.gserviceaccount.com \
   --min-instances 1 \
   --session-affinity \
   --set-env-vars="NODE_ENV=production,LOG_LEVEL=info"
 ```
 
-### שלב 3: אימות התיקון
+### שלב 3: בדוק לוגים
 
-1. בדיקת health endpoint:
 ```bash
-curl https://media-bridge-692599475968.me-west1.run.app/health
+gcloud run logs tail media-bridge --project voice-ai-production
 ```
 
-2. בדיקת שיחה חוזרת למספר +972765993896
+תחפש שגיאות כמו:
+- `Permission denied` 
+- `API not enabled`
+- `Could not load the default credentials`
 
 ---
 
-## סיכום טכני
+## פרטים טכניים
 
-| פריט | סטטוס |
+| רכיב | סטטוס |
 |------|-------|
-| Edge Function | ✅ עובד תקין |
-| TwiML Response | ✅ מחזיר stream URL נכון |
-| Token Generation | ✅ יוצר HMAC token |
-| Media Bridge Deploy | ❌ נכשל בגלל שגיאת קומפילציה |
-| WebSocket Connection | ❌ נכשל |
+| WebSocket Connection | ✅ עובד |
+| Token Validation | ✅ עובד |
+| Google STT | ❌ חסרות הרשאות |
+| Google TTS | ❌ חסרות הרשאות |
+| Greeting | ❌ לא נשלח |
 
-הבעיה היא **שגיאת קומפילציה בלבד** - תיקון הכפילות ופריסה מחדש יפתור את הבעיה.
-
+הבעיה היא **הרשאות בלבד** - הקוד תקין, פשוט צריך לפרוס עם ה-service account הנכון.
