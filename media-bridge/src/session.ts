@@ -60,7 +60,6 @@ export class MediaBridgeSession extends EventEmitter {
   // Session State Tracking
   private sessionState: 'idle' | 'awaiting_user' | 'agent_speaking' | 'processing' = 'idle';
   private lastActivityType: 'none' | 'media_in' | 'stt_result' | 'tts_sent' | 'dialogflow' = 'none';
-  private sessionActive: boolean = true;
   
   // Security
   private validated: boolean = false;
